@@ -1,0 +1,53 @@
+# Build and publish the container image to GHCR when a version tag is pushed.
+#
+# Trigger:  git tag v0.1.0 && git push origin v0.1.0
+# Result:   ghcr.io/jsaumer/jellyfin-recs:0.1.0  (and :latest)
+#
+# Uses the repo's built-in GITHUB_TOKEN — no secrets to configure. The package
+# is published private by default (matching the repo's visibility); make it
+# public later under the package settings if you ever want that.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}   # jsaumer/jellyfin-recs
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # required to push to GHCR
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # From tag v0.1.0 produce: 0.1.0, 0.1, and latest
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

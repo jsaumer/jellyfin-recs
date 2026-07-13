@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jellyfin-recs"
+dynamic = ["version"]
+description = "Automated Jellyfin recommendation dashboard powered by the Anthropic API"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pyyaml"]
+
+[project.scripts]
+# Console entry points — installed as commands when the package is installed.
+jellyfin-recs        = "jellyfin_recs.run_container:main"
+jellyfin-recs-refresh = "jellyfin_recs.pipeline:main"
+jellyfin-recs-seed   = "jellyfin_recs.seed_history:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}

@@ -1,0 +1,26 @@
+# =====================================================================
+# Local / single-host testing with docker compose (NOT swarm).
+# This is the DEV/test file. The Swarm deploy file Komodo pulls is
+# docker-compose.yaml.
+#
+#   docker compose -f compose.local.yml up --build
+#   open http://localhost:8577
+#
+# Uses a .env file for config so you can smoke-test the container before
+# deploying to the swarm. (In the homelab, Komodo stages the .env instead.)
+# =====================================================================
+version: "3.8"
+
+services:
+  app:
+    build: .
+    image: jellyfin-recs:latest
+    env_file:
+      - .env            # your Jellyfin/Anthropic/etc keys for local testing
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data    # local bind mount for persistence during testing
+    ports:
+      - "8577:8577"
+    restart: unless-stopped

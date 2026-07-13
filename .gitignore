@@ -1,0 +1,36 @@
+# ---- Secrets & environment (NEVER commit) ---------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.token
+secrets/
+
+# ---- Runtime data (recs, approvals, seed marker, caches) ------------------
+data/
+*.seeded
+# your real history log; keep history.example.txt tracked
+history.txt
+
+# ---- Library exports (may contain your media inventory; keep private) -----
+jellyfin_movies.json
+jellyfin_shows.json
+jellyfin_cartoons.json
+jellyfin_libraries.json
+# your real master list; seeded at runtime, not in git
+jellyfin_recommendations.md
+
+# ---- Python ----------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# ---- OS / editor -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

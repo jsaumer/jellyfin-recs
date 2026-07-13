@@ -1,0 +1,16 @@
+# Project curation history — one entry per line.
+# Format:  status: Title (Year)      [year optional]
+# status = owned | incoming | dismissed | approved
+# Lines starting with '#' are ignored.
+#
+# Confirmed acquisitions from prior project chats:
+owned: Rocky Balboa (2006)
+owned: Iron Man 2 (2010)
+owned: The Bourne Legacy (2012)
+owned: Predator (1987)
+owned: Wizard Mode
+incoming: Special When Lit
+#
+# Add your own as you go, e.g.:
+# dismissed: The Emoji Movie
+# owned: Breaking Bad

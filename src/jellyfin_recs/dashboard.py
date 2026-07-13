@@ -1,0 +1,137 @@
+"""
+Dashboard web server.
+
+Serves a single-page UI to browse recommendations, approve/dismiss titles,
+trigger a manual refresh, and (when staging is enabled later) push approved
+titles to Radarr/Sonarr.
+
+Run:
+    python3 dashboard.py
+Then open http://127.0.0.1:8577
+
+Uses Flask. Install with:  pip install flask
+"""
+
+import threading
+
+from flask import Flask, jsonify, request, Response
+
+from . import config
+from . import storage
+from . import staging
+from .dashboard_ui import PAGE
+
+app = Flask(__name__)
+_refresh_lock = threading.Lock()
+_refresh_status = {"running": False, "last_error": None, "last_finished": None}
+
+
+@app.route("/")
+def index():
+    return Response(PAGE, mimetype="text/html")
+
+
+@app.route("/api/recommendations")
+def api_recommendations():
+    recs = storage.load_recommendations()
+    state = storage.load_state()
+    return jsonify({"recommendations": recs, "state": state,
+                    "staging": staging.connection_status(),
+                    "version": config.VERSION})
+
+
+@app.route("/api/refresh", methods=["POST"])
+def api_refresh():
+    """Kick off a refresh in the background so the UI stays responsive."""
+    if _refresh_status["running"]:
+        return jsonify({"ok": False, "message": "Refresh already running."}), 409
+
+    def _worker():
+        from . import pipeline
+        with _refresh_lock:
+            _refresh_status["running"] = True
+            _refresh_status["last_error"] = None
+            try:
+                pipeline.run_refresh(verbose=False)
+            except Exception as e:
+                _refresh_status["last_error"] = str(e)
+            finally:
+                _refresh_status["running"] = False
+                import time
+                _refresh_status["last_finished"] = time.time()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return jsonify({"ok": True, "message": "Refresh started."})
+
+
+@app.route("/api/refresh/status")
+def api_refresh_status():
+    return jsonify(_refresh_status)
+
+
+@app.route("/api/item", methods=["POST"])
+def api_item():
+    """Set a title's status: approved / dismissed / reset."""
+    data = request.get_json(force=True)
+    key = storage.item_key(data["title"], data.get("year"))
+    status = data["status"]  # approved | dismissed | reset
+    if status == "reset":
+        state = storage.load_state()
+        state.pop(key, None)
+        storage._write(config.STATE_FILE, state)
+        return jsonify({"ok": True})
+    storage.set_item_status(key, status)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/stage", methods=["POST"])
+def api_stage():
+    """Push an approved title to Radarr/Sonarr. Dormant until STAGING_ENABLED.
+
+    Routing:
+      movies    -> Radarr
+      shows     -> Sonarr (TV root)
+      cartoons  -> Sonarr (cartoon root)
+    """
+    if not config.STAGING_ENABLED:
+        return jsonify({"ok": False,
+                        "message": "Staging is disabled. Enable it in config when ready."}), 403
+    data = request.get_json(force=True)
+    category = data.get("category")  # movies | shows | cartoons
+    try:
+        if category == "movies":
+            result = staging.stage_movie(title=data["title"], year=data.get("year"))
+            landed = config.RADARR_ROOT_FOLDER
+        elif category in ("shows", "cartoons"):
+            result = staging.stage_series(title=data["title"], year=data.get("year"),
+                                          category=category)
+            landed = result.get("rootFolderPath") or staging.resolve_sonarr_root(category)
+        else:
+            return jsonify({"ok": False, "message": f"Unknown category '{category}'."}), 400
+        key = storage.item_key(data["title"], data.get("year"))
+        storage.set_item_status(key, "staged")
+        return jsonify({"ok": True, "result": {"id": result.get("id"),
+                                                "title": result.get("title"),
+                                                "root": landed}})
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+
+@app.route("/api/roots")
+def api_roots():
+    """Expose live root folders + routing so the UI can display them."""
+    return jsonify(staging.connection_status())
+
+
+def main():
+    problems = config.validate(require_claude=False)
+    if problems:
+        print("Warning — config issues (dashboard will still start):")
+        for p in problems:
+            print("  -", p)
+    print(f"Dashboard running at http://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}")
+    app.run(host=config.DASHBOARD_HOST, port=config.DASHBOARD_PORT, debug=False)
+
+
+if __name__ == "__main__":
+    main()
