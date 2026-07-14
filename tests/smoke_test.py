@@ -212,6 +212,70 @@ def test_dashboard_endpoints():
     check("stage blocked while dormant", r.status_code == 403)
 
 
+def test_overprovision_truncation():
+    print("over-provision truncation to display caps")
+    from jellyfin_recs import recommender
+    # 15 candidates, 4 of them owned -> 11 survive ownership -> capped to 10.
+    owned_titles = {f"owned {i}" for i in range(4)}
+    top = []
+    for i in range(15):
+        title = f"Owned {i}" if i < 4 else f"Pick {i}"
+        top.append({"rank": i + 1, "title": title, "year": 2000 + i, "why": "x"})
+    recs = {"top10_movies": top}
+    recs, _ = recommender._filter_owned(recs, owned_titles)
+    recommender._truncate_and_rerank(recs)
+    mv = recs["top10_movies"]
+    check("truncated to exactly 10", len(mv) == 10)
+    check("ranks 1..10 contiguous", [r["rank"] for r in mv] == list(range(1, 11)))
+    check("owned titles gone", not any(r["title"].startswith("Owned") for r in mv))
+
+
+def test_cross_section_dedupe():
+    print("cross-section dedupe (top list wins)")
+    from jellyfin_recs import recommender
+    recs = {
+        "top10_shows": [{"rank": 1, "title": "The Expanse", "year": 2015, "why": "x"}],
+        "shows": {"Sci-Fi": [
+            {"title": "The Expanse", "year": 2015, "why": "x"},   # dup of top10
+            {"title": "Babylon 5", "year": 1994, "why": "x"}]},   # unique, stays
+    }
+    removed = recommender._dedupe_cross_section(recs)
+    genre = recs["shows"]["Sci-Fi"]
+    check("dup dropped from genre", not any(r["title"] == "The Expanse" for r in genre))
+    check("unique genre entry kept", any(r["title"] == "Babylon 5" for r in genre))
+    check("survives in top list", recs["top10_shows"][0]["title"] == "The Expanse")
+    check("dedupe reported", "The Expanse" in removed)
+
+
+def test_why_hygiene():
+    print("why hygiene (drop deliberation leaks)")
+    from jellyfin_recs import recommender
+    recs = {"top10_movies": [
+        {"rank": 1, "title": "Clean", "year": 2020, "why": "Fans of Heat will love it."},
+        {"rank": 2, "title": "Leaky", "year": 2021,
+         "why": "Already in top 10 — replacing. Selecting: something else."}]}
+    dropped = recommender._clean_why(recs)
+    titles = [r["title"] for r in recs["top10_movies"]]
+    check("bad-why rec dropped", "Leaky" not in titles)
+    check("clean rec kept", "Clean" in titles)
+    check("dropped counted", dropped == 1)
+
+
+def test_rating_rerank():
+    print("rating-based display re-rank")
+    from jellyfin_recs import pipeline
+    recs = {"top10_movies": [
+        {"rank": 1, "title": "A", "year": 2001, "why": "x", "rating": 7.1},
+        {"rank": 2, "title": "B", "year": 2002, "why": "x", "rating": 8.4},
+        {"rank": 3, "title": "C", "year": 2003, "why": "x"},            # no rating
+        {"rank": 4, "title": "D", "year": 2004, "why": "x", "rating": 7.9}]}
+    pipeline.rerank_by_rating(recs)
+    order = [r["title"] for r in recs["top10_movies"]]
+    check("ordered by rating desc, unrated last", order == ["B", "D", "A", "C"])
+    check("ranks reassigned 1..4",
+          [r["rank"] for r in recs["top10_movies"]] == [1, 2, 3, 4])
+
+
 def test_json_repair():
     print("truncated JSON repair")
     from jellyfin_recs import recommender
@@ -242,6 +306,10 @@ def main():
     test_tmdb_enrichment()
     test_top10_schema_shape()
     test_contiguous_rerank()
+    test_overprovision_truncation()
+    test_cross_section_dedupe()
+    test_why_hygiene()
+    test_rating_rerank()
     test_dashboard_endpoints()
     print()
     if _failures:

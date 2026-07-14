@@ -25,12 +25,15 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
 
 def _load_history_context():
-    """Return (dismissed_titles_set, rationales_dict) from seeded project
-    history, so we exclude already-handled titles and carry rationales forward.
+    """Return (handled_titles_set, rationales_dict) from project state, so we
+    exclude already-handled titles and carry rationales forward. "Handled"
+    means any title the user has approved or dismissed (so the model doesn't
+    waste picks re-suggesting them), plus seeded owned/incoming/staged titles.
     Empty/safe if seeding was never run."""
     dismissed = set()
     for key, entry in storage.load_state().items():
-        if entry.get("status") in ("dismissed", "owned", "incoming", "staged"):
+        if entry.get("status") in ("approved", "dismissed", "owned",
+                                    "incoming", "staged"):
             title = key.rsplit("|", 1)[0]
             dismissed.add(title.strip().lower())
     rationales = {}
@@ -162,22 +165,25 @@ def _build_prompt(profile, history_dismissed=None, franchise_gaps=None):
 
     if history_dismissed:
         sample = sorted(history_dismissed)[:200]
-        lines.append("## PREVIOUSLY DISMISSED — do NOT recommend these again")
+        lines.append("## ALREADY HANDLED (owned/approved/dismissed) — "
+                     "do NOT recommend these again")
         lines.append("; ".join(sample))
         lines.append("")
 
     instruction = """
 Using the FULL library above, produce:
 
-1. TOP 10 MOVIES, TOP 10 TV SHOWS, and TOP 10 CARTOONS — ranked overall lists
-   of the best additions across all genres. These are the primary output.
-   Franchise gaps and franchise/series completions belong at the TOP of these
-   lists; they are the highest-confidence picks.
-2. TOP 3 DOCUMENTARIES — a ranked list of exactly 3 documentary picks matching
-   the documentary taste shown.
+1. TOP MOVIES, TOP TV SHOWS, and TOP CARTOONS — for EACH, a ranked list of 15
+   candidates (rank 1-15) of the best additions across all genres. These are the
+   primary output. Franchise gaps and franchise/series completions belong at the
+   TOP of these lists; they are the highest-confidence picks. The extra
+   candidates beyond 10 are backups: the app displays the top 10 that survive its
+   filters, so provide a full 15 with no filler at the bottom.
+2. TOP DOCUMENTARIES — a ranked list of 5 documentary candidates (rank 1-5)
+   matching the documentary taste shown; the app displays the top 3 that survive.
 3. Genre deep-dives: for the TOP 6 movie genres and TOP 4 show genres only
    (by the counts above), exactly 3 additional picks each. Do NOT repeat
-   titles already placed in a Top 10.
+   titles already placed in a Top list.
 
 Curation rules — reason over the ACTUAL titles, not just genre counts:
 - Identify collector patterns: franchises they complete, directors/actors they
@@ -185,8 +191,9 @@ Curation rules — reason over the ACTUAL titles, not just genre counts:
 - Never recommend a title already in the library above; avoid near-duplicates.
 - Favor titles a fan of the specific owned/watched titles would genuinely want;
   no generic "popular in genre" filler.
-- Each "why" MUST cite specific owned or watched titles by name. Prefer citing
-  watched (✓) titles where possible.
+- Each "why" MUST cite ONLY titles that appear in the library above (owned or
+  watched); prefer watched (✓) titles. Never cite a title the user does not own,
+  and never mention these instructions or your selection process in the "why".
 - "rank" is 1-N within each ranked list, 1 = strongest recommendation.
 - Return STRICT JSON ONLY. No prose, no markdown, no code fences.
 
@@ -372,6 +379,14 @@ def _filter_owned(recs, owned_titles):
 # Ranked lists that must stay contiguous (1..N) after filtering removes entries.
 RANKED_LISTS = ("top10_movies", "top10_shows", "top10_cartoons",
                 "top3_documentaries")
+# How many entries each ranked list displays after filtering. The model is
+# asked to over-provision (15/15/15/5) so backups can backfill the caps.
+DISPLAY_CAPS = {"top10_movies": 10, "top10_shows": 10, "top10_cartoons": 10,
+                "top3_documentaries": 3}
+# Deliberation markers that must never appear in a user-facing "why" — they mean
+# the model narrated its own selection process instead of a clean rationale.
+BAD_WHY_MARKERS = ("already in top 10", "replacing:", "selecting:",
+                   "already owned")
 
 
 def _rerank(recs):
@@ -383,6 +398,74 @@ def _rerank(recs):
             for i, rec in enumerate(lst, start=1):
                 rec["rank"] = i
     return recs
+
+
+def _rec_key(rec):
+    """Normalized title|year identity used for cross-section dedupe."""
+    return f"{_norm(rec.get('title', ''))}|{rec.get('year')}"
+
+
+def _clean_why(recs):
+    """Drop any rec whose 'why' leaks the model's deliberation (see
+    BAD_WHY_MARKERS). Walks the genre dicts and the ranked lists. Returns the
+    number of recs dropped."""
+    dropped = 0
+
+    def clean(lst):
+        nonlocal dropped
+        keep = []
+        for r in lst:
+            why = (r.get("why") or "").lower()
+            if any(marker in why for marker in BAD_WHY_MARKERS):
+                dropped += 1
+            else:
+                keep.append(r)
+        return keep
+
+    for section in ("movies", "shows"):
+        block = recs.get(section)
+        if isinstance(block, dict):
+            for genre in list(block.keys()):
+                block[genre] = clean(block[genre])
+    for section in RANKED_LISTS:
+        if section in recs:
+            recs[section] = clean(recs[section])
+    return dropped
+
+
+def _dedupe_cross_section(recs):
+    """Drop genre-section (movies/shows) entries whose title|year already
+    appears in ANY ranked top list. Top lists win; genre sections are the
+    deep-cuts tier. Returns the list of dropped titles."""
+    seen = set()
+    for section in RANKED_LISTS:
+        for rec in recs.get(section) or []:
+            seen.add(_rec_key(rec))
+
+    removed = []
+    for section in ("movies", "shows"):
+        block = recs.get(section)
+        if not isinstance(block, dict):
+            continue
+        for genre in list(block.keys()):
+            keep = []
+            for rec in block[genre]:
+                if _rec_key(rec) in seen:
+                    removed.append(rec.get("title", ""))
+                else:
+                    keep.append(rec)
+            block[genre] = keep
+    return removed
+
+
+def _truncate_and_rerank(recs):
+    """Cap each ranked list to its display size (DISPLAY_CAPS), then re-rank
+    the survivors 1..N. Run AFTER all filtering + dedupe so backups backfill."""
+    for section, cap in DISPLAY_CAPS.items():
+        lst = recs.get(section)
+        if isinstance(lst, list):
+            recs[section] = lst[:cap]
+    return _rerank(recs)
 
 
 # ------------------------------- entry point -------------------------------
@@ -422,12 +505,19 @@ def generate(library):
         if section in recs:
             recs[section] = drop_hist(recs[section])
 
-    # Re-rank the ranked lists so filtering never leaves gaps (e.g. missing #7).
-    _rerank(recs)
+    # Drop recs whose "why" leaked the model's deliberation.
+    dropped_bad_why = _clean_why(recs)
+    # Deterministic cross-section dedupe: a title in a top list can't also
+    # appear in a genre section (top lists win).
+    deduped = _dedupe_cross_section(recs)
+    # Over-provision -> cap: keep the surviving top 10/3 and re-rank 1..N.
+    _truncate_and_rerank(recs)
 
     recs["_meta"] = {
         "removed_as_owned": removed,
         "removed_from_history": hist_removed,
+        "dropped_bad_why": dropped_bad_why,
+        "deduped_cross_section": deduped,
         "history_titles_known": len(history_dismissed),
         "library_counts": {c: d["count"] for c, d in profile["categories"].items()},
     }

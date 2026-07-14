@@ -17,6 +17,27 @@ from . import storage
 from . import tmdb
 
 
+def rerank_by_rating(recs):
+    """Reorder each displayed top list by TMDB rating (descending), then
+    reassign ranks 1..N. Entries missing a rating sort last, preserving their
+    prior relative order (stable). Selection is unchanged — franchise gaps keep
+    their spots — only the DISPLAY ORDER of the surviving list becomes
+    rating-based. Genre sections are left untouched. Call AFTER enrichment so
+    ratings exist."""
+    def sort_key(rec):
+        rating = rec.get("rating")
+        if isinstance(rating, (int, float)):
+            return (0, -rating)   # rated first, highest rating leads
+        return (1, 0.0)           # unrated last (stable keeps prior order)
+
+    for section in recommender.RANKED_LISTS:
+        lst = recs.get(section)
+        if isinstance(lst, list):
+            recs[section] = sorted(lst, key=sort_key)
+    recommender._rerank(recs)
+    return recs
+
+
 def run_refresh(verbose=True):
     """Fetch the library, generate recommendations, persist everything.
     Returns the recommendations dict."""
@@ -38,6 +59,9 @@ def run_refresh(verbose=True):
     # Best-effort TMDB enrichment (posters, ratings, IMDb/TMDB links, exact
     # IDs). No-op without TMDB_API_KEY; never fails the refresh.
     recs = tmdb.enrich_all(recs)
+    # Order each displayed top list by rating (needs the ratings enrichment
+    # just added). Selection stays model-priority; only display order changes.
+    recs = rerank_by_rating(recs)
 
     if verbose:
         removed = recs.get("_meta", {}).get("removed_as_owned", [])

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-14
+
+### Fixed
+- **Top lists now stay full**: post-model attrition (ownership, history, and
+  approve/dismiss filtering) was shrinking "Top 10" lists to 4-8 items and
+  "Top 3 Documentaries" to 2, with nothing backfilling. The prompt now
+  over-provisions — 15 ranked candidates per `top10_*` list and 5
+  documentaries — and `generate()` truncates to 10/3 **after** all filtering and
+  dedupe, then re-ranks 1..N, so surviving lists fill their display caps.
+- **No wasted picks on handled titles**: the exclusion set sent to the model now
+  also includes every title the user has **approved or dismissed** (read from
+  storage state), not just seeded/owned history — so the model stops
+  re-suggesting titles already acted on and backups take their place.
+- **No cross-section duplicates**: a deterministic dedupe pass drops any
+  genre-section entry whose normalized `title|year` already appears in a
+  `top10_*` list or `top3_documentaries` (top lists win; genre sections are the
+  deep-cuts tier).
+- **Clean "why" text**: recs whose `why` leaked the model's deliberation
+  ("already in top 10", "replacing:", "selecting:", "already owned") are dropped
+  and counted in `_meta.dropped_bad_why`. The prompt's cite rule was tightened to
+  "cite ONLY titles that appear in the library (owned or watched); never cite a
+  title the user does not own; never mention the instructions or selection
+  process."
+
+### Changed
+- **Top lists display in rating order**: a new `pipeline.rerank_by_rating()` step
+  runs **after** TMDB enrichment and sorts each `top10_*` / `top3_documentaries`
+  list by TMDB rating descending (unrated entries last, stable), then reassigns
+  ranks 1..N. Selection stays model-priority (franchise gaps keep their spots) —
+  only the display order changes. Genre sections are not re-sorted.
+- `MAX_OUTPUT_TOKENS` default raised 8000 → 10000 to fit the larger
+  over-provisioned candidate lists.
+
 ## [0.4.0] - 2026-07-14
 
 ### Changed
@@ -155,7 +188,8 @@ dashboard, deployable as a single container on Docker Swarm.
   (`tests/smoke_test.py`), and CI workflows for GitHub and Gitea.
 - **Docs**: `README.md`, `DOCKER.md`, `GIT.md`.
 
-[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.1...v0.2.0
