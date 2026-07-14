@@ -1,108 +1,107 @@
-# Task: Send the full library to Claude + add franchise-gap detection (v0.2.0)
+# Task: Top-10 restructure + TMDB enrichment (v0.3.0)
 
 ## Context
 
-`jellyfin-recs` is a Python app (package at `src/jellyfin_recs/`) that reads a
-Jellyfin library, asks the Claude API for recommendations, and serves a
-dashboard. It's deployed as a container on Docker Swarm via GitHub Actions →
-GHCR. Current version is 0.1.1.
+`jellyfin-recs` at v0.2.0 sends the full library to Claude with franchise-gap
+detection. Output quality is high, but the structure sprawls: 12+ genres × up
+to 5 picks. This release restructures the output around ranked Top 10 lists and
+enriches every recommendation with TMDB data (posters, IMDb/TMDB links,
+ratings, and exact IDs for future Radarr/Sonarr staging).
 
-## The problem being fixed
+## Changes
 
-The recommendation quality is weak because the prompt sent to Claude only
-includes **genre counts** and a **60-item sample of watched titles** — NOT the
-actual library. As a result the model:
-- Can't see what the user owns, so it re-recommends owned titles (a local
-  ownership filter then strips them post-hoc, wasting the model's picks).
-- Can't detect franchise/series gaps (e.g. "owns Casino Royale + Spectre but
-  not Skyfall"), which are the highest-value recommendations for this user's
-  completionist taste.
+### 1. Output restructure (recommender.py)
 
-## What to change
+Replace the `instruction` block in `_build_prompt()` with the version in
+`prompt_instruction_reference.py`. New shape:
 
-### 1. Send the FULL library, densely encoded
+- `top10_movies`, `top10_shows`, `top10_cartoons` — ranked lists (rank 1-10),
+  the primary output. Franchise gaps should dominate the top ranks.
+- `movies`/`shows` genre dicts remain but capped: top 6 movie genres / top 4
+  show genres, exactly 3 picks each, no repeats from the Top 10s.
+- `documentaries` — flat list of 5.
+- The old flat `cartoons` list is gone (replaced by `top10_cartoons`).
 
-Rework `build_profile()` and `_build_prompt()` in
-`src/jellyfin_recs/recommender.py` to include every owned title (not just
-watched), encoded densely to keep tokens reasonable.
+Update `generate()` so `_filter_owned` and the history-dismissed drop pass also
+walk the three new `top10_*` flat lists (same treatment as `documentaries`).
+Preserve the `rank` field through filtering. Everything else in generate()
+(franchise gaps, JSON repair, `_meta`) stays.
 
-**Format that was measured and chosen** (≈9k tokens for a 1,300-item library,
-vs 623k for a naive JSON dump — a 69× saving for the same signal):
-- Per category: a header line with counts + top genres, then a single
-  comma-separated line of `✓Title (Year)` entries, where a leading `✓` marks a
-  watched title and no prefix means owned-but-unwatched.
+### 2. New module: src/jellyfin_recs/tmdb.py
 
-The reference implementation of both functions is in
-`recommender_reference_functions.py` — match it. It is already tested against
-real data and produces a ~9,600-token prompt containing all 1,298 movies with
-correct watched markers.
+Copy from `tmdb_reference.py` (tested with mocked HTTP). It looks each rec up
+against TMDB after the Claude call and adds: `tmdb_id`, `imdb_id`, `imdb_url`,
+`tmdb_url`, `poster` (w342 URL), `rating`, and `tvdb_id` for TV. Best-effort:
+failures leave recs un-enriched; no key = no-op.
 
-### 2. Add franchise-gap detection
+Config: add to `config.py`:
+    TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
 
-Add deterministic franchise-gap detection so the highest-confidence
-recommendations (missing entries from partially-owned franchises) don't rely on
-the model noticing them from the raw list.
+Wire into `pipeline.py` after `recommender.generate()`:
+    from . import tmdb
+    recs = tmdb.enrich_all(recs)
 
-The reference implementation is in `franchise_detection_reference.py` — add
-`FRANCHISES` and `detect_franchise_gaps()` to `recommender.py`. Then, in
-`generate()`, compute the gaps from `profile["owned_titles"]` and inject them
-into the prompt as an explicit high-priority section, e.g.:
+Add `TMDB_API_KEY=${TMDB_API_KEY}` to the environment block in
+`deploy/docker-compose.yaml`, and a commented line to `.env.example`.
 
-```
-## FRANCHISE GAPS — highest-priority recommendations (the user owns some but not all)
-James Bond (Craig): missing Quantum of Solace, Skyfall, No Time to Die
-X-Men: missing X2, X-Men: The Last Stand, X-Men: First Class, X-Men: Days of Future Past, Logan
-...
-```
+### 3. Staging uses exact IDs (staging.py + dashboard.py)
 
-Tested output against the real library correctly finds Mad Max, X-Men, Craig
-Bond, Terminator, Alien, Predator, and Planet of the Apes gaps.
+In `dashboard.py` `/api/stage`: pass the rec's enriched IDs through —
+`staging.stage_movie(tmdb_id=..., title=..., year=...)` and
+`staging.stage_series(tvdb_id=..., title=..., year=..., category=...)`. The
+staging functions already accept these params and prefer them over name lookup.
+The UI must include `tmdb_id`/`tvdb_id` in the stage POST body when present on
+the rec.
 
-Wire this into `_build_prompt()` (add a `franchise_gaps` parameter) and pass it
-from `generate()`. Instruct the model to prioritize these gaps first.
+### 4. Dashboard UI (dashboard_ui.py)
 
-### 3. Update the smoke tests
+- Each category tab shows a "🏆 Top 10" section FIRST (ranked, showing the rank
+  number), then the capped genre sections (movies/shows), then nothing else.
+  Docs tab is just the flat list. Cartoons tab is just its Top 10.
+- Card upgrades when enrichment fields are present:
+  - poster thumbnail on the left (the `poster` URL; hide gracefully if absent)
+  - a ★ rating badge (`rating`)
+  - small "IMDb" and "TMDB" link buttons opening `imdb_url` / `tmdb_url` in a
+    new tab
+- Tolerate missing fields everywhere (enrichment is best-effort) and tolerate
+  short Top 10 lists (cartoons may return fewer than 10).
+- Approve/Dismiss/state logic unchanged; keys remain title|year.
 
-`tests/smoke_test.py` references the OLD profile field `watched_sample`, which
-no longer exists (it's now `owned_entries` + `watched_count`). Fix the profiling
-test accordingly, and add a test for `detect_franchise_gaps()` (give it a fake
-owned set that partially covers one franchise; assert the missing entries come
-back).
+### 5. Tests
 
-### 4. Version + changelog + compose
+- Update `tests/smoke_test.py`: add a test for `tmdb.enrich_all` with a mocked
+  `_get` (see the mock pattern in `tmdb_test_snippet.py`), asserting movie
+  enrichment fields, tv `tvdb_id`, walking of `top10_*` keys, and the no-key
+  no-op.
+- Add a schema-shape test: feed `_parse_json` a valid new-schema payload and
+  assert `top10_movies` survives `_filter_owned` with ranks intact.
+- `make lint` and `make test` must pass.
 
-- Bump `VERSION` to `0.2.0` (this is a feature release: `make release-minor`).
-- Add a `[0.2.0]` entry to `CHANGELOG.md` under a new "### Added" / "### Changed"
-  describing full-library context and franchise-gap detection.
-- Bump the pinned image tag in `deploy/docker-compose.yaml` from
-  `0.1.1` to `0.2.0`.
+### 6. Version / changelog / compose
 
-## Constraints / gotchas
+- `make release-minor` (0.2.0 → 0.3.0)
+- CHANGELOG `[0.3.0]`: Top-10 restructure, capped genres, TMDB enrichment,
+  exact-ID staging.
+- Bump image tag in `deploy/docker-compose.yaml` to 0.3.0.
 
-- Keep the 8000-token output cap (`MAX_OUTPUT_TOKENS`) from 0.1.1 — with the
-  richer prompt the model may produce more, and the JSON-repair salvage logic
-  must remain intact. Don't touch `_parse_json` / `_repair_truncated_json`.
-- The local ownership verification in `generate()` (`_filter_owned`) must stay —
-  it's the safety net. Franchise detection and full-library context reduce dupes
-  but don't replace the post-hoc filter.
-- Imports inside the package are relative (`from . import config`). Match style.
-- Run `make lint` and `make test` — both must pass before committing.
-- Do NOT commit secrets, `.env`, `data/`, or library JSON files (`.gitignore`
-  already covers these; verify with `git status` before committing).
+## Constraints
+
+- Do NOT touch `_parse_json` / `_repair_truncated_json`.
+- Keep `MAX_OUTPUT_TOKENS` at 8000 — the restructure produces FEWER recs
+  (~55 vs ~80), so headroom improves.
+- Relative imports (`from . import config`). No secrets/data/library JSON in
+  commits.
+- Commit + tag `v0.3.0`; do NOT push (user reviews then pushes to trigger GHCR).
 
 ## Definition of done
 
-1. `make lint` and `make test` pass.
-2. A dry run of the prompt builder against a sample library shows: full titles
-   present, watched markers correct, and a "FRANCHISE GAPS" section when the
-   library partially owns a franchise. (See `verify_snippet.py` for a ready
-   check you can run.)
-3. Version is 0.2.0, changelog updated, compose image tag bumped.
-4. Commit, tag `v0.2.0`, push, and push the tag to trigger the GHCR build:
-   `git push && git push origin v0.2.0`.
+1. `make lint` + `make test` green.
+2. A dry prompt build shows the new instruction (Top 10 + capped genres).
+3. Mocked enrichment test passes.
+4. Version 0.3.0, changelog, compose bumped, committed, tagged, unpushed.
 
-## After deploy
+## After deploy (user steps, for reference)
 
-In Komodo, bump the running image to `0.2.0` and redeploy. Trigger a refresh;
-`recommendations.json` should now include franchise-gap picks (e.g. Skyfall,
-Logan, Mad Max: Fury Road) that the old version couldn't surface.
+- Get a free TMDB API key (themoviedb.org → Settings → API), add TMDB_API_KEY
+  to Komodo env.
+- Push + push tag → GHCR builds → bump Komodo to 0.3.0 → redeploy → refresh.
