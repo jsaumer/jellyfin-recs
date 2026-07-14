@@ -6,6 +6,10 @@
 *.token
 secrets/
 
+# ---- Claude Code handoff packages (local work orders, not app code) --------
+/handoff/
+handoff/
+
 # ---- Runtime data (recs, approvals, seed marker, caches) ------------------
 data/
 *.seeded
@@ -34,3 +38,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Claude Code handoff packages
+/handoff/
