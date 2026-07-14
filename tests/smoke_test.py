@@ -106,11 +106,32 @@ def test_dashboard_endpoints():
     check("stage blocked while dormant", r.status_code == 403)
 
 
+def test_json_repair():
+    print("truncated JSON repair")
+    from jellyfin_recs import recommender
+    # Clean JSON parses.
+    clean = '{"movies": {"Action": [{"title": "Heat", "year": 1995, "why": "x"}]}}'
+    check("clean parses", recommender._parse_json(clean)["movies"]["Action"][0]["title"] == "Heat")
+    # Truncated mid-string still salvages the complete entries.
+    trunc = ('{"movies": {"Action": [{"title": "Heat", "year": 1995, "why": "Mann"}, '
+             '{"title": "Sicario", "year": 2015, "why": "Villeneuve tha')
+    r = recommender._parse_json(trunc, truncated=True)
+    check("truncated salvaged", r is not None and
+          "Heat" in [x["title"] for x in r["movies"]["Action"]])
+    # Unparseable input still raises.
+    try:
+        recommender._parse_json("not json", truncated=False)
+        check("garbage raises", False)
+    except Exception:
+        check("garbage raises", True)
+
+
 def main():
     print("Running smoke tests...\n")
     test_profiling_and_ownership()
     test_history_parsing()
     test_storage_roundtrip()
+    test_json_repair()
     test_dashboard_endpoints()
     print()
     if _failures:

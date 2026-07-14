@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-13
+
+### Fixed
+- Refresh failed with a JSON parse error (`Expecting ',' delimiter`) when the
+  model's recommendation response was truncated by the output-token limit.
+  Raised the default output cap to 8000 tokens (configurable via
+  `MAX_OUTPUT_TOKENS`) and made JSON parsing resilient: a truncated response is
+  now repaired by salvaging all complete recommendations instead of discarding
+  the entire result.
+
+
 ### Added
 - GitHub Actions release workflow that builds and publishes the container image
   to GHCR (`ghcr.io/jsaumer/jellyfin-recs`) on every `v*.*.*` tag push. The
@@ -55,5 +66,6 @@ dashboard, deployable as a single container on Docker Swarm.
   (`tests/smoke_test.py`), and CI workflows for GitHub and Gitea.
 - **Docs**: `README.md`, `DOCKER.md`, `GIT.md`.
 
-[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jsaumer/jellyfin-recs/releases/tag/v0.1.0

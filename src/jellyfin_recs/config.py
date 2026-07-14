@@ -43,6 +43,10 @@ CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 RECS_PER_GENRE = int(os.environ.get("RECS_PER_GENRE", "5"))
 # Cap the library summary size sent to the API (keeps token cost predictable).
 MAX_TITLES_IN_PROMPT = int(os.environ.get("MAX_TITLES_IN_PROMPT", "1500"))
+# Cap on the model's output. A full-library response (recs across ~12 genres
+# plus docs and cartoons) can be long; too low a cap truncates the JSON and
+# breaks parsing. 8000 comfortably fits the default RECS_PER_GENRE=5.
+MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "8000"))
 
 # ============================ STORAGE ======================================
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))

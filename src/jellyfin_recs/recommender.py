@@ -122,7 +122,7 @@ JSON schema:
 def _call_claude(prompt):
     body = json.dumps({
         "model": config.CLAUDE_MODEL,
-        "max_tokens": 4000,
+        "max_tokens": config.MAX_OUTPUT_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
     req = Request(ANTHROPIC_URL, data=body, method="POST")
@@ -130,7 +130,7 @@ def _call_claude(prompt):
     req.add_header("anthropic-version", "2023-06-01")
     req.add_header("content-type", "application/json")
     try:
-        with urlopen(req, timeout=120) as resp:
+        with urlopen(req, timeout=180) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
         detail = e.read().decode("utf-8", "ignore")
@@ -144,18 +144,114 @@ def _call_claude(prompt):
         for block in data.get("content", [])
         if block.get("type") == "text"
     )
-    return text.strip()
+    # If the model ran out of output budget, the JSON is likely truncated. Note
+    # it so the parser can attempt salvage rather than failing outright.
+    stop_reason = data.get("stop_reason")
+    return text.strip(), stop_reason
 
 
-def _parse_json(text):
-    # Strip accidental code fences, then parse.
+def _parse_json(text, truncated=False):
+    # Strip accidental code fences, then isolate the outermost JSON object.
     cleaned = text.replace("```json", "").replace("```", "").strip()
-    # Find the outermost JSON object if there's stray text.
     start = cleaned.find("{")
     end = cleaned.rfind("}")
-    if start != -1 and end != -1:
-        cleaned = cleaned[start:end + 1]
-    return json.loads(cleaned)
+    if start != -1 and end != -1 and end > start:
+        candidate = cleaned[start:end + 1]
+    else:
+        candidate = cleaned[start:] if start != -1 else cleaned
+
+    # First attempt: parse as-is.
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as first_err:
+        # If the response was cut off (or is otherwise malformed), try to
+        # salvage it by repairing the JSON tail rather than losing everything.
+        repaired = _repair_truncated_json(cleaned[start:] if start != -1 else cleaned)
+        if repaired is not None:
+            return repaired
+        raise first_err
+
+
+def _repair_truncated_json(s):
+    """Best-effort recovery for JSON cut off mid-output.
+
+    Approach: repeatedly trim the string back to the last plausible element
+    boundary, close any open brackets, and try to parse. The first candidate
+    that parses wins. This is robust to being cut mid-string, mid-key, or
+    mid-number because it just keeps backing up until it finds a valid prefix.
+    Returns a parsed dict, or None.
+    """
+    if not s:
+        return None
+    start = s.find("{")
+    if start == -1:
+        return None
+    s = s[start:]
+
+    def close_and_try(prefix):
+        # Trim trailing separators/whitespace.
+        tail = prefix.rstrip()
+        while tail and tail[-1] in ",:":
+            tail = tail[:-1].rstrip()
+        if not tail:
+            return None
+        # Determine open brackets by scanning, respecting strings.
+        in_str = False
+        escape = False
+        stack = []
+        for ch in tail:
+            if escape:
+                escape = False
+                continue
+            if in_str:
+                if ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch in "{[":
+                stack.append("}" if ch == "{" else "]")
+            elif ch in "}]":
+                if stack:
+                    stack.pop()
+        # If we ended inside a string, this prefix can't be closed cleanly.
+        if in_str:
+            return None
+        candidate = tail + "".join(reversed(stack))
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+
+    # Try the full string first, then progressively shorter prefixes ending at
+    # the most recent element boundary ('}' or ']'), newest first.
+    # Collect candidate cut indices: positions of '}' or ']' not inside strings.
+    boundaries = []
+    in_str = False
+    escape = False
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+        if in_str:
+            if ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "}]":
+            boundaries.append(i)
+
+    # Newest boundary first — keeps as much content as possible.
+    for idx in reversed(boundaries):
+        result = close_and_try(s[:idx + 1])
+        if result is not None:
+            return result
+    return None
 
 
 # ----------------------- local ownership verification ----------------------
@@ -194,8 +290,8 @@ def generate(library):
     history_dismissed, rationales = _load_history_context()
     profile = build_profile(library)
     prompt = _build_prompt(profile, history_dismissed)
-    raw = _call_claude(prompt)
-    recs = _parse_json(raw)
+    raw, stop_reason = _call_claude(prompt)
+    recs = _parse_json(raw, truncated=(stop_reason == "max_tokens"))
     recs, removed = _filter_owned(recs, profile["owned_titles"])
 
     # Second pass: drop anything present in project history (owned/dismissed).
