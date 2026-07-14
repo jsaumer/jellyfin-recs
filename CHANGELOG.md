@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-13
+
+### Added
+- **Top-10 restructure**: Claude's output now leads with ranked `top10_movies`,
+  `top10_shows`, and `top10_cartoons` lists (rank 1-10) as the primary tier —
+  franchise gaps and series completions are steered to the top ranks. The
+  dashboard renders a "🏆 Top 10" section first on each tab, showing the rank
+  number. The old flat `cartoons` list is replaced by `top10_cartoons`.
+- **Capped genre deep-dives**: the `movies`/`shows` genre sections are now a
+  browse-deeper tier — top 6 movie genres and top 4 show genres, 3 picks each,
+  with no repeats of Top-10 titles. Documentaries remain a flat list of 5. The
+  net result is fewer, higher-signal recs (~55 vs ~80), so the 8000-token output
+  cap has more headroom.
+- **TMDB enrichment** (`tmdb.py`): after the Claude call, each recommendation is
+  looked up against TMDB (zero AI tokens) to add `tmdb_id`, `imdb_id`,
+  `imdb_url`, `tmdb_url`, `poster` (w342), `rating`, and `tvdb_id` (TV). Wired
+  into the pipeline right after `recommender.generate()`. Best-effort: a failed
+  lookup leaves the rec un-enriched, and with no `TMDB_API_KEY` it is a silent
+  no-op. Cards now show a poster thumbnail, a ★ rating badge, and IMDb/TMDB link
+  buttons when those fields are present, tolerating any missing enrichment.
+- **Exact-ID staging**: the "Grab" flow now passes the enriched `tmdb_id` /
+  `tvdb_id` through to `staging.stage_movie` / `stage_series`, so approved
+  titles land on exact TMDB/TVDB IDs instead of a fuzzy name lookup when
+  enrichment is available.
+
+### Changed
+- `_filter_owned` and the history-dismiss pass in `generate()` now also walk the
+  three `top10_*` flat lists, preserving the `rank` field through filtering. The
+  `_parse_json` / `_repair_truncated_json` salvage logic and the local ownership
+  filter are unchanged.
+
 ## [0.2.0] - 2026-07-13
 
 ### Added
@@ -94,7 +125,8 @@ dashboard, deployable as a single container on Docker Swarm.
   (`tests/smoke_test.py`), and CI workflows for GitHub and Gitea.
 - **Docs**: `README.md`, `DOCKER.md`, `GIT.md`.
 
-[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jsaumer/jellyfin-recs/releases/tag/v0.1.0

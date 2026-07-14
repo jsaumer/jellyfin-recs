@@ -166,32 +166,38 @@ def _build_prompt(profile, history_dismissed=None, franchise_gaps=None):
         lines.append("; ".join(sample))
         lines.append("")
 
-    instruction = f"""
-Using the FULL library above, recommend {config.RECS_PER_GENRE} MOVIES and
-{config.RECS_PER_GENRE} TV SHOWS for EACH of the library's top genres, plus a
-short list of documentaries and cartoons/anime that fill obvious gaps.
+    instruction = """
+Using the FULL library above, produce:
 
-Curation guidance — reason over the ACTUAL titles, not just genre counts:
-- Identify the user's collector patterns: franchises they complete, directors
-  or actors they follow, and eras/styles they favor. Recommend accordingly.
-- Prioritize FRANCHISE and SERIES GAPS: if they own most of a franchise or a
-  director's filmography but are missing entries, surface those first — they're
-  the highest-confidence picks.
-- Never recommend a title already in the library above (check the lists — this
-  is verified separately too, but avoid obvious dupes and near-duplicates).
-- Favor titles that a fan of the specific owned/watched titles would genuinely
-  want; avoid generic "popular in this genre" picks that ignore their taste.
-- Each "why" MUST cite specific owned or watched titles by name to justify the
-  fit. Prefer citing watched (✓) titles where possible.
+1. TOP 10 MOVIES, TOP 10 TV SHOWS, and TOP 10 CARTOONS — ranked overall lists
+   of the best additions across all genres. These are the primary output.
+   Franchise gaps and franchise/series completions belong at the TOP of these
+   lists; they are the highest-confidence picks.
+2. Genre deep-dives: for the TOP 6 movie genres and TOP 4 show genres only
+   (by the counts above), exactly 3 additional picks each. Do NOT repeat
+   titles already placed in a Top 10.
+3. A short documentaries list (5 picks) matching the documentary taste shown.
+
+Curation rules — reason over the ACTUAL titles, not just genre counts:
+- Identify collector patterns: franchises they complete, directors/actors they
+  follow, eras and styles they favor.
+- Never recommend a title already in the library above; avoid near-duplicates.
+- Favor titles a fan of the specific owned/watched titles would genuinely want;
+  no generic "popular in genre" filler.
+- Each "why" MUST cite specific owned or watched titles by name. Prefer citing
+  watched (✓) titles where possible.
+- "rank" is 1-10 within each Top 10 list, 1 = strongest recommendation.
 - Return STRICT JSON ONLY. No prose, no markdown, no code fences.
 
 JSON schema:
-{{
-  "movies": {{ "<genre>": [ {{"title": str, "year": int, "why": str}} ] }},
-  "shows":  {{ "<genre>": [ {{"title": str, "year": int, "why": str}} ] }},
-  "documentaries": [ {{"title": str, "year": int, "why": str}} ],
-  "cartoons": [ {{"title": str, "year": int, "why": str}} ]
-}}
+{
+  "top10_movies":   [ {"rank": int, "title": str, "year": int, "why": str} ],
+  "top10_shows":    [ {"rank": int, "title": str, "year": int, "why": str} ],
+  "top10_cartoons": [ {"rank": int, "title": str, "year": int, "why": str} ],
+  "movies": { "<genre>": [ {"title": str, "year": int, "why": str} ] },
+  "shows":  { "<genre>": [ {"title": str, "year": int, "why": str} ] },
+  "documentaries": [ {"title": str, "year": int, "why": str} ]
+}
 """
     return "\n".join(lines) + instruction
 
@@ -354,7 +360,8 @@ def _filter_owned(recs, owned_titles):
     for section in ("movies", "shows"):
         for genre in list(recs.get(section, {}).keys()):
             recs[section][genre] = clean_list(recs[section][genre])
-    for section in ("documentaries", "cartoons"):
+    for section in ("documentaries", "top10_movies", "top10_shows",
+                    "top10_cartoons"):
         if section in recs:
             recs[section] = clean_list(recs[section])
     return recs, removed
@@ -392,7 +399,8 @@ def generate(library):
     for section in ("movies", "shows"):
         for genre in list(recs.get(section, {}).keys()):
             recs[section][genre] = drop_hist(recs[section][genre])
-    for section in ("documentaries", "cartoons"):
+    for section in ("documentaries", "top10_movies", "top10_shows",
+                    "top10_cartoons"):
         if section in recs:
             recs[section] = drop_hist(recs[section])
 

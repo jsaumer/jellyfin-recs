@@ -38,14 +38,24 @@ PAGE = r"""<!DOCTYPE html>
     padding-bottom: 6px; margin-bottom: 12px; }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
   .card { background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+    border-radius: 10px; padding: 14px; display: flex; flex-direction: row; gap: 12px; }
   .card.approved { border-color: var(--green); }
   .card.dismissed { opacity: .45; }
   .card.staged { border-color: var(--purple); }
+  .poster { width: 68px; height: 102px; object-fit: cover; border-radius: 6px;
+    flex-shrink: 0; background: var(--panel2); }
+  .cardBody { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; }
   .title { font-weight: 600; }
+  .rank { display: inline-block; background: var(--accent); color: #04203f;
+    font-weight: 700; font-size: 12px; border-radius: 6px; padding: 1px 7px; margin-right: 4px; }
+  .rating { color: var(--amber); font-size: 12px; font-weight: 600; white-space: nowrap; }
   .year { color: var(--muted); font-weight: 400; font-size: 13px; }
   .why { color: var(--muted); font-size: 13px; flex: 1; }
-  .actions { display: flex; gap: 6px; margin-top: 4px; }
+  .links { display: flex; gap: 6px; }
+  .linkBtn { font-size: 12px; text-decoration: none; padding: 3px 9px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
+  .linkBtn:hover { border-color: var(--accent); color: var(--text); }
+  .actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
   .actions button { padding: 5px 10px; font-size: 13px; }
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; align-self: flex-start; }
   .badge.approved { background: rgba(63,185,80,.15); color: var(--green); }
@@ -138,14 +148,39 @@ function statusOf(title, year) {
   return st ? st.status : null;
 }
 
-function card(rec, kind) {
+function card(rec, showRank) {
   const st = statusOf(rec.title, rec.year);
   const div = document.createElement("div");
   div.className = "card" + (st ? " " + st : "");
-  let badge = st ? `<span class="badge ${st}">${st}</span>` : "";
-  div.innerHTML = `${badge}
-    <div class="title">${rec.title} <span class="year">(${rec.year||"—"})</span></div>
+
+  // Poster thumbnail (best-effort — hide gracefully if absent or broken).
+  if (rec.poster) {
+    const img = document.createElement("img");
+    img.className = "poster"; img.src = rec.poster; img.alt = "";
+    img.loading = "lazy";
+    img.onerror = () => img.remove();
+    div.appendChild(img);
+  }
+
+  const body = document.createElement("div");
+  body.className = "cardBody";
+  const badge = st ? `<span class="badge ${st}">${st}</span>` : "";
+  const rankHtml = (showRank && rec.rank) ? `<span class="rank">#${rec.rank}</span>` : "";
+  const ratingHtml = rec.rating ? `<span class="rating">★ ${rec.rating}</span>` : "";
+  body.innerHTML = `${badge}
+    <div class="title">${rankHtml}${rec.title}
+      <span class="year">(${rec.year||"—"})</span> ${ratingHtml}</div>
     <div class="why">${rec.why||""}</div>`;
+
+  // External link buttons (only when enrichment supplied them).
+  if (rec.imdb_url || rec.tmdb_url) {
+    const links = document.createElement("div");
+    links.className = "links";
+    if (rec.imdb_url) links.appendChild(mkLink("IMDb", rec.imdb_url));
+    if (rec.tmdb_url) links.appendChild(mkLink("TMDB", rec.tmdb_url));
+    body.appendChild(links);
+  }
+
   const actions = document.createElement("div");
   actions.className = "actions";
   if (st !== "approved" && st !== "staged")
@@ -157,13 +192,37 @@ function card(rec, kind) {
       (ACTIVE === "movies" || ACTIVE === "shows" || ACTIVE === "cartoons")) {
     actions.appendChild(mkBtn("→ Grab", () => stage(rec)));
   }
-  div.appendChild(actions);
+  body.appendChild(actions);
+
+  div.appendChild(body);
   return div;
 }
 
 function mkBtn(label, fn) {
   const b = document.createElement("button");
   b.textContent = label; b.onclick = fn; return b;
+}
+
+function mkLink(label, url) {
+  const a = document.createElement("a");
+  a.className = "linkBtn"; a.textContent = label;
+  a.href = url; a.target = "_blank"; a.rel = "noopener";
+  return a;
+}
+
+function gridOf(list, showRank) {
+  const grid = document.createElement("div");
+  grid.className = "cards";
+  (list || []).forEach(r => grid.appendChild(card(r, showRank)));
+  return grid;
+}
+
+function section(title, list, showRank) {
+  const g = document.createElement("div");
+  g.className = "genre";
+  g.innerHTML = `<h3>${title}</h3>`;
+  g.appendChild(gridOf(list, showRank));
+  return g;
 }
 
 function render() {
@@ -175,27 +234,35 @@ function render() {
       Click <b>Refresh</b> to generate your first set.</div>`;
     return;
   }
-  const section = recs[ACTIVE];
-  if (!section) { c.innerHTML = `<div class="empty">Nothing here yet.</div>`; return; }
 
-  const kind = ACTIVE === "movies" ? "movie" : "series";
-  if (Array.isArray(section)) {           // docs / cartoons = flat list
-    const grid = document.createElement("div");
-    grid.className = "cards";
-    section.forEach(r => grid.appendChild(card(r, kind)));
-    c.appendChild(grid);
-  } else {                                 // movies / shows = grouped by genre
-    for (const genre of Object.keys(section)) {
-      const g = document.createElement("div");
-      g.className = "genre";
-      g.innerHTML = `<h3>${genre}</h3>`;
-      const grid = document.createElement("div");
-      grid.className = "cards";
-      section[genre].forEach(r => grid.appendChild(card(r, kind)));
-      g.appendChild(grid);
-      c.appendChild(g);
+  // Documentaries: a single flat list, no Top 10.
+  if (ACTIVE === "documentaries") {
+    const docs = recs.documentaries || [];
+    if (!docs.length) { c.innerHTML = `<div class="empty">Nothing here yet.</div>`; return; }
+    c.appendChild(gridOf(docs, false));
+    return;
+  }
+
+  // movies / shows / cartoons: ranked Top 10 first, then capped genre sections.
+  let rendered = false;
+  const top = recs["top10_" + ACTIVE] || [];   // top10_movies/shows/cartoons
+  if (top.length) {
+    c.appendChild(section("🏆 Top 10", top, true));
+    rendered = true;
+  }
+
+  // Genre deep-dives exist only for movies/shows (cartoons is Top 10 only).
+  const genres = recs[ACTIVE];
+  if (genres && !Array.isArray(genres)) {
+    for (const genre of Object.keys(genres)) {
+      const items = genres[genre] || [];
+      if (!items.length) continue;
+      c.appendChild(section(genre, items, false));
+      rendered = true;
     }
   }
+
+  if (!rendered) c.innerHTML = `<div class="empty">Nothing here yet.</div>`;
 }
 
 async function setStatus(rec, status) {
@@ -212,7 +279,8 @@ async function stage(rec) {
   toast("Grabbing " + rec.title + " ...");
   const res = await fetch("/api/stage", { method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({title: rec.title, year: rec.year, category: ACTIVE}) });
+    body: JSON.stringify({title: rec.title, year: rec.year, category: ACTIVE,
+                          tmdb_id: rec.tmdb_id, tvdb_id: rec.tvdb_id}) });
   const out = await res.json();
   if (out.ok) { DATA.state[keyOf(rec.title, rec.year)] = {status:"staged"};
     const where = out.result && out.result.root ? " → " + out.result.root : "";

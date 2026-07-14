@@ -14,6 +14,7 @@ from . import config
 from . import jellyfin_client
 from . import recommender
 from . import storage
+from . import tmdb
 
 
 def run_refresh(verbose=True):
@@ -34,6 +35,9 @@ def run_refresh(verbose=True):
     if verbose:
         print(f"[2/3] Requesting recommendations from Claude ({config.CLAUDE_MODEL}) ...")
     recs = recommender.generate(library)
+    # Best-effort TMDB enrichment (posters, ratings, IMDb/TMDB links, exact
+    # IDs). No-op without TMDB_API_KEY; never fails the refresh.
+    recs = tmdb.enrich_all(recs)
 
     if verbose:
         removed = recs.get("_meta", {}).get("removed_as_owned", [])

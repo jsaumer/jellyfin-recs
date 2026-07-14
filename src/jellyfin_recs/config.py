@@ -48,6 +48,13 @@ MAX_TITLES_IN_PROMPT = int(os.environ.get("MAX_TITLES_IN_PROMPT", "1500"))
 # breaks parsing. 8000 comfortably fits the default RECS_PER_GENRE=5.
 MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "8000"))
 
+# ============================ TMDB =========================================
+# Optional. Enriches each recommendation with poster, rating, IMDb/TMDB links,
+# and exact TMDB/TVDB IDs (for precise Radarr/Sonarr staging). Best-effort:
+# with no key, enrichment is a silent no-op. Get a free key at
+# https://www.themoviedb.org/settings/api
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
+
 # ============================ STORAGE ======================================
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 RECS_FILE = os.path.join(DATA_DIR, "recommendations.json")
