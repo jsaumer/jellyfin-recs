@@ -39,8 +39,9 @@ LIBRARY_MAP = {
 # ============================ CLAUDE API ===================================
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
-# How many recommendations to request per genre.
-RECS_PER_GENRE = int(os.environ.get("RECS_PER_GENRE", "5"))
+# How many picks each genre deep-dive section requests. First-boot default for
+# the `recs_per_genre` setting (the Settings page owns it after that).
+RECS_PER_GENRE = int(os.environ.get("RECS_PER_GENRE", "3"))
 # Cap the library summary size sent to the API (keeps token cost predictable).
 MAX_TITLES_IN_PROMPT = int(os.environ.get("MAX_TITLES_IN_PROMPT", "1500"))
 # Cap on the model's output. The over-provisioned response (20 candidates per
@@ -101,15 +102,23 @@ STAGING_ENABLED = os.environ.get("STAGING_ENABLED", "false").lower() == "true"
 
 RADARR_URL = _clean(os.environ.get("RADARR_URL", "http://localhost:7878"))
 RADARR_API_KEY = os.environ.get("RADARR_API_KEY", "")
-RADARR_QUALITY_PROFILE = os.environ.get("RADARR_QUALITY_PROFILE", "HD-1080p")
+# "" = auto: use the profile most of the library already uses. Resolved by NAME
+# live at every grab (see staging._resolve_quality_profile).
+RADARR_QUALITY_PROFILE = os.environ.get("RADARR_QUALITY_PROFILE", "")
 RADARR_ROOT_FOLDER = os.environ.get("RADARR_ROOT_FOLDER", "/movies")
 # If True, Radarr won't auto-search on add (safest — you trigger searches yourself).
 RADARR_ADD_MONITORED_ONLY = os.environ.get("RADARR_ADD_MONITORED_ONLY", "true").lower() == "true"
 
 SONARR_URL = _clean(os.environ.get("SONARR_URL", "http://localhost:8989"))
 SONARR_API_KEY = os.environ.get("SONARR_API_KEY", "")
-SONARR_QUALITY_PROFILE = os.environ.get("SONARR_QUALITY_PROFILE", "HD-1080p")
+SONARR_QUALITY_PROFILE = os.environ.get("SONARR_QUALITY_PROFILE", "")
 SONARR_ADD_MONITORED_ONLY = os.environ.get("SONARR_ADD_MONITORED_ONLY", "true").lower() == "true"
+
+# ---- Search-on-grab (first-boot defaults for the matching settings) --------
+# Movies default to searching immediately on grab; TV defaults to off so a
+# multi-season add doesn't kick off a huge download without an explicit choice.
+SEARCH_ON_GRAB_MOVIES = os.environ.get("SEARCH_ON_GRAB_MOVIES", "true").lower() == "true"
+SEARCH_ON_GRAB_TV = os.environ.get("SEARCH_ON_GRAB_TV", "off").strip().lower()
 # Sonarr holds both TV and Cartoons as series, but in different root folders.
 # These hints are matched (exact path first, then case-insensitive substring)
 # against the LIVE root folders read from Sonarr's API — so you set them to
@@ -121,6 +130,8 @@ SONARR_CARTOON_ROOT_HINT = os.environ.get("SONARR_CARTOON_ROOT_HINT", "/cartoon"
 
 def validate(require_claude=True, require_staging=False):
     """Return a list of human-readable config problems (empty = all good)."""
+    from . import settings   # local import: settings imports config
+
     problems = []
     if not JELLYFIN_API_KEY:
         problems.append("JELLYFIN_API_KEY is not set.")
@@ -128,9 +139,9 @@ def validate(require_claude=True, require_staging=False):
         problems.append("Set JELLYFIN_USER_ID or JELLYFIN_USERNAME.")
     if require_claude and not ANTHROPIC_API_KEY:
         problems.append("ANTHROPIC_API_KEY is not set (needed for recommendations).")
-    if require_staging and STAGING_ENABLED:
+    if require_staging and settings.get("staging_enabled"):
         if not RADARR_API_KEY:
-            problems.append("STAGING_ENABLED but RADARR_API_KEY is not set.")
+            problems.append("Staging is enabled but RADARR_API_KEY is not set.")
         if not SONARR_API_KEY:
-            problems.append("STAGING_ENABLED but SONARR_API_KEY is not set.")
+            problems.append("Staging is enabled but SONARR_API_KEY is not set.")
     return problems

@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   jellyfin-recs:
-    image: ${IMAGE:-ghcr.io/jsaumer/jellyfin-recs:0.4.2}
+    image: ${IMAGE:-ghcr.io/jsaumer/jellyfin-recs:0.5.0}
     # Pinned to a specific version. Bump this tag (or override the IMAGE env var
     # in Komodo) to deploy a new release. Published to GHCR by the GitHub Actions
     # release workflow on every `git push` of a `v*.*.*` tag.
@@ -22,7 +22,11 @@ services:
       # ---- Claude / Anthropic ----
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
-      - RECS_PER_GENRE=${RECS_PER_GENRE:-5}
+      # NOTE: RECS_PER_GENRE, REFRESH_INTERVAL_HOURS and STAGING_ENABLED are
+      # FIRST-BOOT defaults only. Once saved from the dashboard Settings page,
+      # the value in /data/settings.json wins and changing these has no effect.
+      # API keys and URLs are never managed in settings — they stay here.
+      - RECS_PER_GENRE=${RECS_PER_GENRE:-3}
       - REFRESH_INTERVAL_HOURS=${REFRESH_INTERVAL_HOURS:-168}
       # ---- TMDB (optional enrichment: posters, ratings, links, exact IDs) ----
       - TMDB_API_KEY=${TMDB_API_KEY}

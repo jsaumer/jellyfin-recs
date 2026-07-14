@@ -13,20 +13,21 @@ and add a cron entry that calls pipeline.py — example in the README.
 import time
 import sys
 
-from . import config
 from . import pipeline
+from . import settings
 
 
 def main():
-    interval = config.REFRESH_INTERVAL_HOURS * 3600
     print(f"Scheduler started. Refreshing now, then every "
-          f"{config.REFRESH_INTERVAL_HOURS}h.")
+          f"{settings.get('refresh_interval_hours')}h.")
     while True:
         started = time.time()
         try:
             pipeline.run_refresh(verbose=True)
         except Exception as e:
             print(f"Refresh failed: {e}", file=sys.stderr)
+        # Re-read each loop so a Settings-page change applies without a restart.
+        interval = settings.get("refresh_interval_hours") * 3600
         elapsed = time.time() - started
         sleep_for = max(60, interval - elapsed)
         nxt = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() + sleep_for))

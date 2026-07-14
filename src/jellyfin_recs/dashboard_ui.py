@@ -79,6 +79,30 @@ PAGE = r"""<!DOCTYPE html>
   .stagingPill { font-size: 12px; padding: 3px 10px; border-radius: 12px;
     border: 1px solid var(--border); color: var(--muted); }
   .stagingPill.on { color: var(--green); border-color: var(--green); }
+  /* ---- Settings modal ---- */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .modal.show { display: flex; }
+  .modalCard { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; width: 100%; max-width: 540px; max-height: 85vh;
+    display: flex; flex-direction: column; }
+  .modalHead { display: flex; align-items: center; gap: 10px; padding: 13px 16px;
+    border-bottom: 1px solid var(--border); }
+  .modalHead h2 { font-size: 16px; margin: 0; flex: 1; }
+  .modalBody { padding: 16px; overflow-y: auto; display: flex;
+    flex-direction: column; gap: 11px; }
+  .modalBody h4 { margin: 5px 0 0; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted);
+    border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+  .modalBody label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .modalBody label.chk { flex-direction: row; align-items: center; gap: 8px; }
+  .modalBody input[type=number], .modalBody select { font: inherit; font-size: 13px;
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; }
+  .modalFoot { display: flex; align-items: center; gap: 10px; padding: 13px 16px;
+    border-top: 1px solid var(--border); flex-wrap: wrap; }
+  .envNote { color: var(--muted); font-size: 11px; flex: 1; min-width: 210px; }
+  .warnOpt { color: var(--amber); font-size: 11px; }
   .tmdbFooter { display: flex; align-items: center; justify-content: center;
     gap: 10px; flex-wrap: wrap; padding: 20px; margin-top: 24px;
     border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
@@ -94,8 +118,25 @@ PAGE = r"""<!DOCTYPE html>
   <span class="spacer"></span>
   <span id="stagingPill" class="stagingPill">staging: —</span>
   <span id="versionBadge" class="meta" style="font-size:12px"></span>
+  <button id="gearBtn" onclick="openSettings()" title="Settings">⚙</button>
   <button id="refreshBtn" class="primary" onclick="refresh()">↻ Refresh</button>
 </header>
+
+<div id="settingsModal" class="modal">
+  <div class="modalCard">
+    <div class="modalHead">
+      <h2>⚙ Settings</h2>
+      <button onclick="closeSettings()" title="Close">✕</button>
+    </div>
+    <div class="modalBody" id="settingsBody">Loading ...</div>
+    <div class="modalFoot">
+      <span class="envNote">API keys and URLs are managed in the deployment
+        environment (Komodo), not here.</span>
+      <button onclick="closeSettings()">Cancel</button>
+      <button class="primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
 <div class="wrap">
   <div class="tabs" id="tabs"></div>
   <div id="content"></div>
@@ -333,8 +374,105 @@ async function stage(rec) {
   const out = await res.json();
   if (out.ok) { DATA.state[keyOf(rec.title, rec.year)] = {status:"staged"};
     const where = out.result && out.result.root ? " → " + out.result.root : "";
-    toast("Grabbed ✓" + where); render(); }
+    // A substituted quality profile is never applied silently.
+    toast(out.profile_drift ? "⚠ " + out.profile_drift : "Grabbed ✓" + where);
+    render(); }
   else toast("Grab failed: " + out.message);
+}
+
+/* ----------------------------- settings ---------------------------------- */
+let SETTINGS = null, PROFILES = null;
+
+async function openSettings() {
+  document.getElementById("settingsModal").classList.add("show");
+  document.getElementById("settingsBody").textContent = "Loading ...";
+  const s = await (await fetch("/api/settings")).json();
+  SETTINGS = s.settings;
+  renderSettings();                       // paint immediately ...
+  try {                                   // ... then fill in live profiles
+    PROFILES = await (await fetch("/api/profiles")).json();
+    renderSettings();
+  } catch (e) { /* profiles are best-effort */ }
+}
+
+function closeSettings() {
+  document.getElementById("settingsModal").classList.remove("show");
+}
+
+// Dropdown of live quality profiles: "<name> — used by <n> of <total>", with
+// the majority profile marked as the library default. The stored value is the
+// NAME, never the id (ids get renumbered by Profilarr re-syncs).
+function profileSelect(app, key) {
+  const cur = SETTINGS[key] || "";
+  const data = PROFILES ? PROFILES[app] : null;
+  if (!data) return `<select id="${key}" disabled><option>loading ...</option></select>`;
+  if (data.error)
+    return `<div class="warnOpt">${app} unavailable — ${data.error}</div>`;
+  let opts = `<option value=""${cur === "" ? " selected" : ""}>Auto (library default)</option>`;
+  let known = false;
+  for (const p of data.profiles) {
+    const isCur = cur.toLowerCase() === p.name.toLowerCase();
+    if (isCur) known = true;
+    const dflt = p.is_default ? " (library default)" : "";
+    opts += `<option value="${p.name}"${isCur ? " selected" : ""}>` +
+            `${p.name} — used by ${p.count} of ${data.total}${dflt}</option>`;
+  }
+  // A configured name that no longer exists stays visible, so the drift is
+  // obvious in the UI rather than silently snapping to something else.
+  if (cur && !known)
+    opts += `<option value="${cur}" selected>${cur} — ⚠ not found in ${app}</option>`;
+  return `<select id="${key}">${opts}</select>`;
+}
+
+function renderSettings() {
+  const s = SETTINGS;
+  const sel = (v, want) => (v === want ? " selected" : "");
+  document.getElementById("settingsBody").innerHTML = `
+    <h4>Recommendations</h4>
+    <label>Refresh interval (hours)
+      <input type="number" min="1" id="refresh_interval_hours" value="${s.refresh_interval_hours}"></label>
+    <label>Recommendations per genre
+      <input type="number" min="1" id="recs_per_genre" value="${s.recs_per_genre}"></label>
+
+    <h4>Staging</h4>
+    <label class="chk"><input type="checkbox" id="staging_enabled"
+      ${s.staging_enabled ? "checked" : ""}> Staging enabled</label>
+    <label class="chk"><input type="checkbox" id="search_on_grab_movies"
+      ${s.search_on_grab_movies ? "checked" : ""}> Search on grab — Movies</label>
+    <label>Search on grab — TV &amp; Cartoons
+      <select id="search_on_grab_tv">
+        <option value="off"${sel(s.search_on_grab_tv, "off")}>Off (queue only)</option>
+        <option value="first_season"${sel(s.search_on_grab_tv, "first_season")}>First season only</option>
+        <option value="all"${sel(s.search_on_grab_tv, "all")}>All missing episodes</option>
+      </select></label>
+
+    <h4>Quality profiles</h4>
+    <label>Radarr — Movies ${profileSelect("radarr", "radarr_quality_profile")}</label>
+    <label>Sonarr — TV &amp; Cartoons ${profileSelect("sonarr", "sonarr_quality_profile")}</label>`;
+}
+
+async function saveSettings() {
+  const val = id => document.getElementById(id);
+  const payload = {
+    refresh_interval_hours: parseInt(val("refresh_interval_hours").value, 10),
+    recs_per_genre: parseInt(val("recs_per_genre").value, 10),
+    staging_enabled: val("staging_enabled").checked,
+    search_on_grab_movies: val("search_on_grab_movies").checked,
+    search_on_grab_tv: val("search_on_grab_tv").value,
+  };
+  // Only send profile names when the dropdowns actually rendered.
+  for (const k of ["radarr_quality_profile", "sonarr_quality_profile"]) {
+    const el = val(k);
+    if (el && el.tagName === "SELECT" && !el.disabled) payload[k] = el.value;
+  }
+  const res = await fetch("/api/settings", { method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) });
+  const out = await res.json();
+  if (!res.ok || !out.ok) { toast("Save failed: " + (out.message || res.status)); return; }
+  SETTINGS = out.settings;
+  toast("Settings saved ✓");
+  closeSettings();
+  load();                    // staging pill / routing may have changed
 }
 
 async function refresh() {

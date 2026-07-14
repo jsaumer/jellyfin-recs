@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-14
+
+### Added
+- **Settings layer** (`settings.py`): user-tunable knobs persisted to
+  `DATA_DIR/settings.json` with an atomic write (temp file + rename). Precedence
+  is **settings file > env default > hardcoded**, so environment variables now
+  only seed the *first-boot* value — once a key is saved from the UI the stored
+  value wins and changing the env var has no further effect. Managed keys:
+  `refresh_interval_hours`, `recs_per_genre`, `staging_enabled`,
+  `radarr_quality_profile`, `sonarr_quality_profile`, `search_on_grab_movies`
+  (default **on**), `search_on_grab_tv` (`off` | `first_season` | `all`, default
+  `off`). URLs, API keys, `DATA_DIR`, `MAX_OUTPUT_TOKENS` and `CLAUDE_MODEL` are
+  deliberately **not** managed and never appear in `settings.json` or the UI.
+- **Settings page** (gear icon in the header): recommendation knobs, staging
+  toggles, and per-app quality-profile dropdowns, plus a muted note that keys and
+  URLs live in the deployment environment. New endpoints: `GET`/`POST`
+  `/api/settings` (validated; unknown keys and bad enums are rejected with a 400
+  and nothing is written) and `GET /api/profiles`.
+- **Live quality-profile selection**: `/api/profiles` merges each app's
+  `/qualityprofile` list with usage counts from `/movie` and `/series`, so every
+  option reads `"<name> — used by <n> of <total>"` and the majority profile is
+  marked `(library default)`. The stored value is the profile **name**.
+- **Search on grab**: Radarr's `addOptions.searchForMovie` follows the movies
+  toggle (on by default). Sonarr has three modes — `off` (queue only, previous
+  behaviour), `first_season` (monitors only season 1 via an explicit seasons
+  array and searches), and `all` (monitors everything and searches).
+
+### Changed
+- **Quality profiles resolve by NAME, live, at every grab** — IDs are never
+  cached, because a Profilarr/Dictionarry re-sync renumbers them and a cached ID
+  silently points at the wrong profile. Resolution order is configured name →
+  majority-in-library → first profile. When a configured name no longer exists
+  the substitution is **never silent**: it is logged and returned as
+  `profile_drift` on the stage response, which the dashboard toasts.
+- The scheduler re-reads `refresh_interval_hours` on **every loop**, so an
+  interval change from the Settings page applies without a redeploy.
+- `recs_per_genre` is now actually wired to the prompt's genre deep-dive count
+  (it had been vestigial since 0.3.0). Its default drops 5 → 3 to match the
+  behaviour that has been shipping.
+- Staging is gated on the `staging_enabled` **setting** rather than the env var
+  (the env value remains the first-boot default).
+
+### Notes
+- The optional Dictionarry/Profilarr name badge from the spec was **skipped** —
+  it needed a cached daily fetch of an external repo for a cosmetic label, which
+  exceeded its complexity budget. Profile drift is already surfaced explicitly,
+  which covers the underlying concern.
+
 ## [0.4.2] - 2026-07-14
 
 ### Changed
@@ -210,7 +258,8 @@ dashboard, deployable as a single container on Docker Swarm.
   (`tests/smoke_test.py`), and CI workflows for GitHub and Gitea.
 - **Docs**: `README.md`, `DOCKER.md`, `GIT.md`.
 
-[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.3.0...v0.4.0

@@ -304,6 +304,163 @@ def test_ui_density():
           "not endorsed or certified by TMDB" in PAGE)
 
 
+def test_settings_precedence_and_validation():
+    print("settings precedence + validation")
+    from jellyfin_recs import settings, config
+    import os as _os
+    # Start clean: no settings.json -> env/hardcoded defaults win.
+    try:
+        _os.remove(settings.settings_file())
+    except OSError:
+        pass
+    saved = config.REFRESH_INTERVAL_HOURS
+    config.REFRESH_INTERVAL_HOURS = 168
+    try:
+        check("env default used when unset", settings.get("refresh_interval_hours") == 168)
+        check("hardcoded default for search_on_grab_movies",
+              settings.get("search_on_grab_movies") is True)
+        check("hardcoded default for search_on_grab_tv",
+              settings.get("search_on_grab_tv") == "off")
+        # Stored value WINS over the env default.
+        settings.save({"refresh_interval_hours": 24})
+        check("stored value wins over env", settings.get("refresh_interval_hours") == 24)
+        # ...and keeps winning even if the env changes afterwards.
+        config.REFRESH_INTERVAL_HOURS = 999
+        check("stored still wins after env change",
+              settings.get("refresh_interval_hours") == 24)
+        check("settings.json written atomically",
+              _os.path.exists(settings.settings_file()))
+        # Validation.
+        for bad, label in [({"search_on_grab_tv": "sometimes"}, "bad enum"),
+                           ({"refresh_interval_hours": 0}, "int below 1"),
+                           ({"refresh_interval_hours": "abc"}, "non-int"),
+                           ({"totally_made_up": 1}, "unknown key")]:
+            try:
+                settings.save(bad)
+                check(f"{label} rejected", False)
+            except ValueError:
+                check(f"{label} rejected", True)
+        # A rejected save must not have clobbered the good value.
+        check("rejected save wrote nothing",
+              settings.get("refresh_interval_hours") == 24)
+        check("enum accepts valid mode",
+              settings.save({"search_on_grab_tv": "first_season"})["search_on_grab_tv"]
+              == "first_season")
+        # Secrets must never be managed here.
+        for secret in ("radarr_api_key", "radarr_url", "anthropic_api_key"):
+            check(f"{secret} not a managed key", secret not in settings.MANAGED_KEYS)
+    finally:
+        config.REFRESH_INTERVAL_HOURS = saved
+        try:
+            _os.remove(settings.settings_file())
+        except OSError:
+            pass
+
+
+def test_quality_profile_resolution():
+    print("quality profile resolution (live, by name)")
+    from jellyfin_recs import staging
+    saved_api = staging._api
+    calls = []
+
+    # Two profiles; the library mostly uses id 2 ("HD-1080p").
+    state = {"profiles": [{"id": 1, "name": "Any"}, {"id": 2, "name": "HD-1080p"}],
+             "movies": [{"qualityProfileId": 2}, {"qualityProfileId": 2},
+                        {"qualityProfileId": 1}]}
+
+    def fake_api(base, key, path, method="GET", payload=None):
+        calls.append(path)
+        if path == "/qualityprofile":
+            return state["profiles"]
+        if path == "/movie":
+            return state["movies"]
+        return {}
+
+    staging._api = fake_api
+    try:
+        # Configured name wins.
+        pid, drift = staging._resolve_quality_profile("radarr", "HD-1080p")
+        check("configured name resolves", pid == 2 and drift is None)
+        # Auto ("") picks the majority-in-library profile.
+        pid, drift = staging._resolve_quality_profile("radarr", "")
+        check("auto picks majority", pid == 2 and drift is None)
+        # A configured name that no longer exists -> majority + drift message.
+        pid, drift = staging._resolve_quality_profile("radarr", "Remux-2160p")
+        check("missing name falls back to majority", pid == 2)
+        check("drift reported", drift is not None and "Remux-2160p" in drift
+              and "HD-1080p" in drift)
+        # IDs are never cached: renumber the profiles and re-resolve.
+        state["profiles"] = [{"id": 9, "name": "HD-1080p"}, {"id": 7, "name": "Any"}]
+        state["movies"] = [{"qualityProfileId": 9}]
+        pid, drift = staging._resolve_quality_profile("radarr", "HD-1080p")
+        check("re-resolves fresh id after re-sync (no caching)", pid == 9)
+        check("qualityprofile re-fetched each call",
+              calls.count("/qualityprofile") == 4)
+    finally:
+        staging._api = saved_api
+
+
+def test_sonarr_search_modes():
+    print("sonarr payload shaping (search-on-grab modes)")
+    from jellyfin_recs import staging
+    chosen = {"title": "The Expanse",
+              "seasons": [{"seasonNumber": 1}, {"seasonNumber": 2}, {"seasonNumber": 3}]}
+
+    off = staging._series_payload(chosen, 280619, 2, "/tv", "off")
+    check("off: no search", off["addOptions"]["searchForMissingEpisodes"] is False)
+    check("off: monitors all", off["addOptions"]["monitor"] == "all")
+    check("off: no seasons override", "seasons" not in off)
+
+    first = staging._series_payload(chosen, 280619, 2, "/tv", "first_season")
+    check("first_season: searches", first["addOptions"]["searchForMissingEpisodes"] is True)
+    monitored = [s["seasonNumber"] for s in first["seasons"] if s["monitored"]]
+    unmonitored = [s["seasonNumber"] for s in first["seasons"] if not s["monitored"]]
+    check("first_season: only season 1 monitored", monitored == [1])
+    check("first_season: later seasons unmonitored", unmonitored == [2, 3])
+    check("first_season: monitor=firstSeason",
+          first["addOptions"]["monitor"] == "firstSeason")
+
+    allm = staging._series_payload(chosen, 280619, 2, "/tv", "all")
+    check("all: searches", allm["addOptions"]["searchForMissingEpisodes"] is True)
+    check("all: monitors all", allm["addOptions"]["monitor"] == "all")
+    check("all: no seasons override", "seasons" not in allm)
+    check("profile id passed through", allm["qualityProfileId"] == 2)
+
+
+def test_settings_api():
+    print("settings API round-trip")
+    try:
+        from jellyfin_recs import dashboard, settings
+    except ImportError as e:
+        check(f"flask available ({e})", False)
+        return
+    import os as _os
+    dashboard.app.config["TESTING"] = True
+    c = dashboard.app.test_client()
+    try:
+        r = c.get("/api/settings")
+        check("GET /api/settings 200", r.status_code == 200)
+        body = r.get_json()
+        check("returns managed keys", "refresh_interval_hours" in body["settings"])
+        check("never leaks secrets", not any(
+            k in body["settings"] for k in ("radarr_api_key", "jellyfin_api_key",
+                                            "anthropic_api_key", "radarr_url")))
+        r = c.post("/api/settings", json={"search_on_grab_tv": "all",
+                                          "refresh_interval_hours": 12})
+        check("POST /api/settings 200", r.status_code == 200)
+        check("round-trips saved value",
+              c.get("/api/settings").get_json()["settings"]["search_on_grab_tv"] == "all")
+        r = c.post("/api/settings", json={"search_on_grab_tv": "nope"})
+        check("bad enum -> 400", r.status_code == 400)
+        r = c.post("/api/settings", json={"radarr_api_key": "leak"})
+        check("unknown/secret key -> 400", r.status_code == 400)
+    finally:
+        try:
+            _os.remove(settings.settings_file())
+        except OSError:
+            pass
+
+
 def test_json_repair():
     print("truncated JSON repair")
     from jellyfin_recs import recommender
@@ -340,6 +497,10 @@ def main():
     test_rating_rerank()
     test_prompt_candidate_buffer()
     test_ui_density()
+    test_settings_precedence_and_validation()
+    test_quality_profile_resolution()
+    test_sonarr_search_modes()
+    test_settings_api()
     test_dashboard_endpoints()
     print()
     if _failures:

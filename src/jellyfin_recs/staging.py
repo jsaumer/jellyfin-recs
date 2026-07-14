@@ -1,20 +1,28 @@
 """
 Radarr / Sonarr staging layer.
 
-STATUS: Wired but DORMANT. Nothing here runs unless config.STAGING_ENABLED is
-True AND the dashboard explicitly calls stage_movie / stage_series for an
-approved title. Even then, it only ADDS a title to Radarr/Sonarr's monitored
-list — it does not force downloads (search-on-add is off by default).
+Nothing here runs unless the `staging_enabled` setting is on AND the dashboard
+explicitly calls stage_movie / stage_series for an approved title.
 
-This module is intentionally isolated so that turning staging on later is a
-config flip, not a code change.
+Two behaviours are user-controlled from the Settings page:
+  - Quality profile: chosen by NAME and resolved LIVE at every grab. IDs are
+    never cached — Profilarr/Dictionarry re-syncs renumber them, so a cached ID
+    silently points at the wrong profile later. If a configured name no longer
+    exists we fall back to the majority-in-library profile and report the
+    substitution as "profile_drift" rather than silently picking.
+  - Search on grab: movies search immediately by default; TV is off /
+    first-season-only / all-missing-episodes.
+
+URLs and API keys stay environment-only and never pass through settings.
 """
 
 import json
+import sys
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from . import config
+from . import settings
 
 
 def _api(base_url, api_key, path, method="GET", payload=None):
@@ -35,30 +43,111 @@ def _api(base_url, api_key, path, method="GET", payload=None):
 
 
 def _guard():
-    if not config.STAGING_ENABLED:
+    if not settings.get("staging_enabled"):
         raise RuntimeError(
-            "Staging is disabled. Set STAGING_ENABLED=true in config/.env to "
+            "Staging is disabled. Enable it on the dashboard Settings page to "
             "allow pushing titles to Radarr/Sonarr."
         )
 
 
-def _quality_profile_id(base_url, api_key, wanted_name):
-    profiles = _api(base_url, api_key, "/qualityprofile")
-    for p in profiles:
-        if p.get("name", "").lower() == wanted_name.lower():
-            return p["id"]
-    # Fall back to the first profile if the named one isn't found.
-    return profiles[0]["id"] if profiles else 1
+def _creds(which):
+    """(base_url, api_key) for 'radarr' or 'sonarr'. Env-only — never settings."""
+    if which == "radarr":
+        return config.RADARR_URL, config.RADARR_API_KEY
+    return config.SONARR_URL, config.SONARR_API_KEY
+
+
+# --------------------------- quality profiles ------------------------------
+# Profile IDs are NEVER cached. Profilarr / Dictionarry re-syncs renumber them,
+# so a cached ID silently points at the wrong profile later. We resolve by NAME,
+# live, on every grab.
+def _profile_usage_counts(base, api_key, which):
+    """Count qualityProfileId occurrences across the existing library.
+    Radarr counts /movie, Sonarr counts /series. Best-effort: {} on failure."""
+    path = "/movie" if which == "radarr" else "/series"
+    try:
+        items = _api(base, api_key, path)
+    except Exception:
+        return {}
+    counts = {}
+    for item in items or []:
+        pid = item.get("qualityProfileId")
+        if pid is not None:
+            counts[pid] = counts.get(pid, 0) + 1
+    return counts
+
+
+def _majority_profile(profiles, counts):
+    """The profile most of the library uses; the first profile if unknown."""
+    if counts:
+        top_id = max(counts, key=lambda pid: counts[pid])
+        for p in profiles:
+            if p.get("id") == top_id:
+                return p
+    return profiles[0]
+
+
+def _resolve_quality_profile(which, configured_name):
+    """Resolve a quality profile to an ID by NAME, live.
+
+    Order: configured name (case-insensitive exact, then substring) ->
+    majority-in-library -> first profile.
+
+    Returns (profile_id, drift_message_or_None). `drift_message` is set only
+    when a configured name failed to resolve, so the caller can surface it —
+    we never silently substitute a different profile.
+    """
+    base, api_key = _creds(which)
+    profiles = _api(base, api_key, "/qualityprofile")
+    if not profiles:
+        raise RuntimeError(f"{which.title()} reports no quality profiles.")
+
+    name = (configured_name or "").strip()
+    if name:
+        for p in profiles:
+            if p.get("name", "").strip().lower() == name.lower():
+                return p["id"], None
+        for p in profiles:
+            if name.lower() in p.get("name", "").strip().lower():
+                return p["id"], None
+        # Configured, but gone — fall back loudly.
+        fallback = _majority_profile(
+            profiles, _profile_usage_counts(base, api_key, which))
+        drift = (f"Quality profile '{name}' no longer exists in "
+                 f"{which.title()}; used '{fallback.get('name')}' instead.")
+        print(f"[staging] WARNING: {drift}", file=sys.stderr)
+        return fallback["id"], drift
+
+    # "" = auto: whatever the library mostly uses.
+    fallback = _majority_profile(
+        profiles, _profile_usage_counts(base, api_key, which))
+    return fallback["id"], None
+
+
+def list_profiles(which):
+    """Live quality profiles + library usage counts, for the Settings page.
+
+    Returns {"profiles": [{id, name, count, is_default}], "total": n}, where
+    is_default marks the majority (library default) profile.
+    """
+    base, api_key = _creds(which)
+    profiles = _api(base, api_key, "/qualityprofile")
+    counts = _profile_usage_counts(base, api_key, which)
+    top_id = max(counts, key=lambda pid: counts[pid]) if counts else None
+    return {
+        "profiles": [{"id": p.get("id"), "name": p.get("name", ""),
+                      "count": counts.get(p.get("id"), 0),
+                      "is_default": p.get("id") == top_id}
+                     for p in profiles],
+        "total": sum(counts.values()),
+    }
 
 
 def get_root_folders(which):
     """Return the list of configured root folders from Radarr or Sonarr.
     `which` is 'radarr' or 'sonarr'. Each entry: {path, freeSpace, accessible}.
     Used by the dashboard to display real folders and by routing below."""
-    if which == "radarr":
-        base, key = config.RADARR_URL, config.RADARR_API_KEY
-    else:
-        base, key = config.SONARR_URL, config.SONARR_API_KEY
+    base, key = _creds(which)
     return _api(base, key, "/rootfolder")
 
 
@@ -105,9 +194,10 @@ def resolve_sonarr_root(category):
 # ------------------------------- Radarr ------------------------------------
 def stage_movie(tmdb_id=None, title=None, year=None):
     """Add a movie to Radarr's monitored list. Requires a TMDB id OR a title
-    to look up. Returns the Radarr movie record."""
+    to look up. Returns the Radarr movie record, plus a "profile_drift" key if
+    the configured quality profile had to be substituted."""
     _guard()
-    base, key = config.RADARR_URL, config.RADARR_API_KEY
+    base, key = _creds("radarr")
 
     if not tmdb_id:
         term = f"{title} {year}" if year else title
@@ -119,17 +209,25 @@ def stage_movie(tmdb_id=None, title=None, year=None):
     else:
         lookup = _api(base, key, f"/movie/lookup/tmdb?tmdbId={tmdb_id}")
 
+    profile_id, drift = _resolve_quality_profile(
+        "radarr", settings.get("radarr_quality_profile"))
+
     payload = {
         "title": lookup["title"],
         "tmdbId": tmdb_id,
         "year": lookup.get("year", year),
-        "qualityProfileId": _quality_profile_id(base, key, config.RADARR_QUALITY_PROFILE),
+        "qualityProfileId": profile_id,
         "rootFolderPath": config.RADARR_ROOT_FOLDER,
         "monitored": True,
         "minimumAvailability": "released",
-        "addOptions": {"searchForMovie": not config.RADARR_ADD_MONITORED_ONLY},
+        "addOptions": {
+            "searchForMovie": bool(settings.get("search_on_grab_movies")),
+        },
     }
-    return _api(base, key, "/movie", method="POST", payload=payload)
+    result = _api(base, key, "/movie", method="POST", payload=payload) or {}
+    if drift:
+        result["profile_drift"] = drift
+    return result
 
 
 # ------------------------------- Sonarr ------------------------------------
@@ -166,29 +264,58 @@ def stage_series(tvdb_id=None, title=None, year=None, category="shows",
         chosen = results[0] if results else {}
 
     root_path = resolve_sonarr_root(category)
+    profile_id, drift = _resolve_quality_profile(
+        "sonarr", settings.get("sonarr_quality_profile"))
 
+    payload = _series_payload(chosen, tvdb_id, profile_id, root_path,
+                              settings.get("search_on_grab_tv"))
+    result = _api(base, key, "/series", method="POST", payload=payload) or {}
+    if drift:
+        result["profile_drift"] = drift
+    return result
+
+
+def _series_payload(chosen, tvdb_id, profile_id, root_path, mode):
+    """Build the Sonarr /series add payload for a search-on-grab `mode`.
+
+    "off"          -> monitor every season, do not search (queue only).
+    "first_season" -> monitor ONLY season 1 (explicit seasons array) and search.
+    "all"          -> monitor every season and search for all missing episodes.
+
+    Pure/side-effect free so the three shapes can be asserted in tests.
+    """
+    search = mode in ("first_season", "all")
     payload = {
-        "title": chosen["title"],
+        "title": chosen.get("title"),
         "tvdbId": tvdb_id,
-        "qualityProfileId": _quality_profile_id(base, key, config.SONARR_QUALITY_PROFILE),
+        "qualityProfileId": profile_id,
         "rootFolderPath": root_path,
         "monitored": True,
         "seasonFolder": True,
         "addOptions": {
-            "searchForMissingEpisodes": not config.SONARR_ADD_MONITORED_ONLY,
-            "monitor": "all",
+            "searchForMissingEpisodes": search,
+            # "firstSeason" makes Sonarr's own monitoring agree with the
+            # explicit seasons array below; "all" covers the other two modes.
+            "monitor": "firstSeason" if mode == "first_season" else "all",
         },
     }
-    return _api(base, key, "/series", method="POST", payload=payload)
+    if mode == "first_season":
+        seasons = [s.get("seasonNumber") for s in (chosen.get("seasons") or [])]
+        # Fall back to a lone season 1 if the lookup carried no season list.
+        numbers = [n for n in seasons if n is not None] or [1]
+        payload["seasons"] = [{"seasonNumber": n, "monitored": n == 1}
+                              for n in numbers]
+    return payload
 
 
 def connection_status():
     """Lightweight health check used by the dashboard to show whether staging
     is reachable, plus the live root folders discovered from each service."""
-    status = {"enabled": config.STAGING_ENABLED, "radarr": "off", "sonarr": "off",
+    enabled = settings.get("staging_enabled")
+    status = {"enabled": enabled, "radarr": "off", "sonarr": "off",
               "roots": {"radarr": [], "sonarr": []},
               "routing": {"shows": None, "cartoons": None}}
-    if not config.STAGING_ENABLED:
+    if not enabled:
         return status
     for name, base, key in [
         ("radarr", config.RADARR_URL, config.RADARR_API_KEY),

@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from . import config
+from . import settings
 from . import storage
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
@@ -182,8 +183,8 @@ Using the FULL library above, produce:
 2. TOP DOCUMENTARIES — a ranked list of 5 documentary candidates (rank 1-5)
    matching the documentary taste shown; the app displays the top 3 that survive.
 3. Genre deep-dives: for the TOP 6 movie genres and TOP 4 show genres only
-   (by the counts above), exactly 3 additional picks each. Do NOT repeat
-   titles already placed in a Top list.
+   (by the counts above), exactly {per_genre} additional picks each. Do NOT
+   repeat titles already placed in a Top list.
 
 Curation rules — reason over the ACTUAL titles, not just genre counts:
 - Identify collector patterns: franchises they complete, directors/actors they
@@ -207,6 +208,10 @@ JSON schema:
   "shows":  { "<genre>": [ {"title": str, "year": int, "why": str} ] }
 }
 """
+    # Plain .replace rather than an f-string — the JSON schema above is full of
+    # literal braces that would otherwise all need escaping.
+    instruction = instruction.replace(
+        "{per_genre}", str(settings.get("recs_per_genre")))
     return "\n".join(lines) + instruction
 
 

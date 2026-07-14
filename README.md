@@ -126,6 +126,36 @@ PYTHONPATH=src python3 -m jellyfin_recs.run_scheduler          # refreshes now, 
 ```
 Manual refresh (the button in the dashboard) works regardless.
 
+## Settings (and how they beat the environment)
+
+The dashboard has a **⚙ Settings** page (gear icon, top right) covering the
+refresh interval, picks per genre, staging on/off, search-on-grab, and the
+Radarr/Sonarr quality profiles. It writes `DATA_DIR/settings.json`.
+
+**Precedence: `settings.json` > environment variable > built-in default.**
+Environment variables are only the *first-boot* default. Once you save a key from
+the Settings page, the stored value wins — editing the env var (or the compose
+file) will not override it. To hand a key back to the environment, remove it from
+`settings.json`.
+
+Changing the refresh interval takes effect on the scheduler's next loop, with no
+redeploy.
+
+**API keys and URLs are never settings.** They stay environment-only and never
+appear in `settings.json` or the UI.
+
+Two staging behaviours worth knowing:
+
+- **Quality profiles are matched by name, live, at every grab.** IDs are never
+  cached, because a Profilarr re-sync renumbers them and a cached ID would
+  silently point at the wrong profile. Leave a profile on *Auto* to use whichever
+  profile most of your library already uses. If a configured profile name
+  disappears, the grab falls back to the majority profile and tells you it did —
+  it never substitutes silently.
+- **Search on grab**: movies search immediately by default. TV/cartoons default to
+  *off* (queue only) so a multi-season add can't kick off a huge download by
+  accident; switch to *first season only* or *all missing episodes* when you want it.
+
 ## Token usage & cost
 
 Each refresh makes **one** Claude API call. The important design detail: the

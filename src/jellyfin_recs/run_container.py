@@ -42,9 +42,10 @@ def _seed_once():
 
 
 def _run_scheduler():
-    interval = config.REFRESH_INTERVAL_HOURS * 3600
     from . import pipeline
-    print(f"[scheduler] started; interval {config.REFRESH_INTERVAL_HOURS}h")
+    from . import settings
+    print(f"[scheduler] started; interval "
+          f"{settings.get('refresh_interval_hours')}h")
     # Small startup delay so the dashboard is up first and we don't hammer
     # Jellyfin/Claude the instant the container starts.
     if _stop.wait(timeout=15):
@@ -56,6 +57,9 @@ def _run_scheduler():
             print("[scheduler] refresh complete")
         except Exception as e:
             print(f"[scheduler] refresh failed: {e}", file=sys.stderr)
+        # Re-read each loop so a Settings-page change to the interval applies
+        # without a redeploy.
+        interval = settings.get("refresh_interval_hours") * 3600
         elapsed = time.time() - started
         # Interruptible sleep so SIGTERM stops us promptly.
         if _stop.wait(timeout=max(60, interval - elapsed)):
