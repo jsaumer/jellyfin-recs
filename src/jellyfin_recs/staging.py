@@ -133,12 +133,26 @@ def stage_movie(tmdb_id=None, title=None, year=None):
 
 
 # ------------------------------- Sonarr ------------------------------------
-def stage_series(tvdb_id=None, title=None, year=None, category="shows"):
+def stage_series(tvdb_id=None, title=None, year=None, category="shows",
+                 tmdb_id=None):
     """Add a series to Sonarr's monitored list, routed to the correct root
     folder for its category ('shows' -> TV root, 'cartoons' -> cartoon root).
     Root folders are read live from Sonarr."""
     _guard()
     base, key = config.SONARR_URL, config.SONARR_API_KEY
+    chosen = None
+
+    # Prefer an exact tvdb_id. If we only have a tmdb_id, resolve it to a
+    # tvdb_id via Sonarr's Skyhook (which accepts `tmdb:` terms) before falling
+    # back to a fuzzy name lookup — keeps staging exact-ID end-to-end.
+    if not tvdb_id and tmdb_id:
+        try:
+            results = _api(base, key, f"/series/lookup?term=tmdb:{tmdb_id}")
+            if results and results[0].get("tvdbId"):
+                chosen = results[0]
+                tvdb_id = chosen["tvdbId"]
+        except Exception:
+            pass  # fall through to name lookup
 
     if not tvdb_id:
         term = title
@@ -147,7 +161,7 @@ def stage_series(tvdb_id=None, title=None, year=None, category="shows"):
             raise RuntimeError(f"Sonarr found no match for '{term}'.")
         chosen = results[0]
         tvdb_id = chosen["tvdbId"]
-    else:
+    elif chosen is None:
         results = _api(base, key, f"/series/lookup?term=tvdb:{tvdb_id}")
         chosen = results[0] if results else {}
 

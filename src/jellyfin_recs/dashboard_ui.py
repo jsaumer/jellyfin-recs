@@ -69,6 +69,11 @@ PAGE = r"""<!DOCTYPE html>
   .stagingPill { font-size: 12px; padding: 3px 10px; border-radius: 12px;
     border: 1px solid var(--border); color: var(--muted); }
   .stagingPill.on { color: var(--green); border-color: var(--green); }
+  .tmdbFooter { display: flex; align-items: center; justify-content: center;
+    gap: 10px; flex-wrap: wrap; padding: 20px; margin-top: 24px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+  .tmdbFooter a { display: inline-flex; }
+  .tmdbFooter svg { display: block; }
 </style>
 </head>
 <body>
@@ -85,14 +90,30 @@ PAGE = r"""<!DOCTYPE html>
   <div class="tabs" id="tabs"></div>
   <div id="content"></div>
 </div>
+<footer class="tmdbFooter">
+  <a href="https://www.themoviedb.org" target="_blank" rel="noopener"
+     aria-label="The Movie Database (TMDB)">
+    <svg width="60" height="22" viewBox="0 0 60 22" xmlns="http://www.w3.org/2000/svg" role="img">
+      <defs>
+        <linearGradient id="tmdbg" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#90cea1"/>
+          <stop offset="1" stop-color="#01b4e4"/>
+        </linearGradient>
+      </defs>
+      <rect width="60" height="22" rx="4" fill="url(#tmdbg)"/>
+      <text x="30" y="15" text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
+            font-size="12" font-weight="700" fill="#0d253f">TMDB</text>
+    </svg>
+  </a>
+  <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
+</footer>
 <div id="toast" class="toast"></div>
 
 <script>
 let DATA = null;
 let ACTIVE = "movies";
 const TABS = [
-  ["movies", "🎬 Movies"], ["shows", "📺 TV Shows"],
-  ["documentaries", "🎞️ Documentaries"], ["cartoons", "🎨 Cartoons"],
+  ["movies", "🎬 Movies"], ["shows", "📺 TV Shows"], ["cartoons", "🎨 Cartoons"],
 ];
 
 function toast(msg) {
@@ -148,7 +169,7 @@ function statusOf(title, year) {
   return st ? st.status : null;
 }
 
-function card(rec, showRank) {
+function card(rec, displayRank) {
   const st = statusOf(rec.title, rec.year);
   const div = document.createElement("div");
   div.className = "card" + (st ? " " + st : "");
@@ -165,7 +186,9 @@ function card(rec, showRank) {
   const body = document.createElement("div");
   body.className = "cardBody";
   const badge = st ? `<span class="badge ${st}">${st}</span>` : "";
-  const rankHtml = (showRank && rec.rank) ? `<span class="rank">#${rec.rank}</span>` : "";
+  // Rank chip is the display position (1..N), so the visible list is always
+  // contiguous even if server-side filtering left holes in rec.rank.
+  const rankHtml = displayRank ? `<span class="rank">#${displayRank}</span>` : "";
   const ratingHtml = rec.rating ? `<span class="rating">★ ${rec.rating}</span>` : "";
   body.innerHTML = `${badge}
     <div class="title">${rankHtml}${rec.title}
@@ -213,7 +236,8 @@ function mkLink(label, url) {
 function gridOf(list, showRank) {
   const grid = document.createElement("div");
   grid.className = "cards";
-  (list || []).forEach(r => grid.appendChild(card(r, showRank)));
+  // Number by display position so ranked lists are always contiguous #1..#N.
+  (list || []).forEach((r, i) => grid.appendChild(card(r, showRank ? i + 1 : null)));
   return grid;
 }
 
@@ -235,20 +259,22 @@ function render() {
     return;
   }
 
-  // Documentaries: a single flat list, no Top 10.
-  if (ACTIVE === "documentaries") {
-    const docs = recs.documentaries || [];
-    if (!docs.length) { c.innerHTML = `<div class="empty">Nothing here yet.</div>`; return; }
-    c.appendChild(gridOf(docs, false));
-    return;
-  }
-
   // movies / shows / cartoons: ranked Top 10 first, then capped genre sections.
   let rendered = false;
   const top = recs["top10_" + ACTIVE] || [];   // top10_movies/shows/cartoons
   if (top.length) {
     c.appendChild(section("🏆 Top 10", top, true));
     rendered = true;
+  }
+
+  // Documentaries live inside the Movies tab as a ranked Top 3, between the
+  // movie Top 10 and the genre sections.
+  if (ACTIVE === "movies") {
+    const docs = recs.top3_documentaries || [];
+    if (docs.length) {
+      c.appendChild(section("🎬 Top 3 Documentaries", docs, true));
+      rendered = true;
+    }
   }
 
   // Genre deep-dives exist only for movies/shows (cartoons is Top 10 only).

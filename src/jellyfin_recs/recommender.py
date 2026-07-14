@@ -173,10 +173,11 @@ Using the FULL library above, produce:
    of the best additions across all genres. These are the primary output.
    Franchise gaps and franchise/series completions belong at the TOP of these
    lists; they are the highest-confidence picks.
-2. Genre deep-dives: for the TOP 6 movie genres and TOP 4 show genres only
+2. TOP 3 DOCUMENTARIES — a ranked list of exactly 3 documentary picks matching
+   the documentary taste shown.
+3. Genre deep-dives: for the TOP 6 movie genres and TOP 4 show genres only
    (by the counts above), exactly 3 additional picks each. Do NOT repeat
    titles already placed in a Top 10.
-3. A short documentaries list (5 picks) matching the documentary taste shown.
 
 Curation rules — reason over the ACTUAL titles, not just genre counts:
 - Identify collector patterns: franchises they complete, directors/actors they
@@ -186,17 +187,17 @@ Curation rules — reason over the ACTUAL titles, not just genre counts:
   no generic "popular in genre" filler.
 - Each "why" MUST cite specific owned or watched titles by name. Prefer citing
   watched (✓) titles where possible.
-- "rank" is 1-10 within each Top 10 list, 1 = strongest recommendation.
+- "rank" is 1-N within each ranked list, 1 = strongest recommendation.
 - Return STRICT JSON ONLY. No prose, no markdown, no code fences.
 
 JSON schema:
 {
-  "top10_movies":   [ {"rank": int, "title": str, "year": int, "why": str} ],
-  "top10_shows":    [ {"rank": int, "title": str, "year": int, "why": str} ],
-  "top10_cartoons": [ {"rank": int, "title": str, "year": int, "why": str} ],
+  "top10_movies":      [ {"rank": int, "title": str, "year": int, "why": str} ],
+  "top10_shows":       [ {"rank": int, "title": str, "year": int, "why": str} ],
+  "top10_cartoons":    [ {"rank": int, "title": str, "year": int, "why": str} ],
+  "top3_documentaries":[ {"rank": int, "title": str, "year": int, "why": str} ],
   "movies": { "<genre>": [ {"title": str, "year": int, "why": str} ] },
-  "shows":  { "<genre>": [ {"title": str, "year": int, "why": str} ] },
-  "documentaries": [ {"title": str, "year": int, "why": str} ]
+  "shows":  { "<genre>": [ {"title": str, "year": int, "why": str} ] }
 }
 """
     return "\n".join(lines) + instruction
@@ -360,11 +361,28 @@ def _filter_owned(recs, owned_titles):
     for section in ("movies", "shows"):
         for genre in list(recs.get(section, {}).keys()):
             recs[section][genre] = clean_list(recs[section][genre])
-    for section in ("documentaries", "top10_movies", "top10_shows",
+    for section in ("top3_documentaries", "top10_movies", "top10_shows",
                     "top10_cartoons"):
         if section in recs:
             recs[section] = clean_list(recs[section])
     return recs, removed
+
+
+# ------------------------------- re-ranking --------------------------------
+# Ranked lists that must stay contiguous (1..N) after filtering removes entries.
+RANKED_LISTS = ("top10_movies", "top10_shows", "top10_cartoons",
+                "top3_documentaries")
+
+
+def _rerank(recs):
+    """Renumber each ranked list's `rank` field sequentially (1..N) in place,
+    preserving order — so ownership/history removals don't leave rank holes."""
+    for section in RANKED_LISTS:
+        lst = recs.get(section)
+        if isinstance(lst, list):
+            for i, rec in enumerate(lst, start=1):
+                rec["rank"] = i
+    return recs
 
 
 # ------------------------------- entry point -------------------------------
@@ -399,10 +417,13 @@ def generate(library):
     for section in ("movies", "shows"):
         for genre in list(recs.get(section, {}).keys()):
             recs[section][genre] = drop_hist(recs[section][genre])
-    for section in ("documentaries", "top10_movies", "top10_shows",
+    for section in ("top3_documentaries", "top10_movies", "top10_shows",
                     "top10_cartoons"):
         if section in recs:
             recs[section] = drop_hist(recs[section])
+
+    # Re-rank the ranked lists so filtering never leaves gaps (e.g. missing #7).
+    _rerank(recs)
 
     recs["_meta"] = {
         "removed_as_owned": removed,

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-14
+
+### Changed
+- **Documentaries folded into the Movies tab**: the flat `documentaries` list is
+  replaced by a ranked `top3_documentaries` (exactly 3 picks, rank 1-3). The
+  dashboard drops the standalone Documentaries tab; the Movies tab now renders
+  🏆 Top 10 → 🎬 Top 3 Documentaries → capped genre sections. The prompt schema,
+  `generate()` filter passes, `tmdb.enrich_all` walk, and tests all use the new
+  key.
+- **Contiguous ranks (no more missing #7/#9)**: after the ownership/history
+  filters, `generate()` re-ranks each `top10_*` list and `top3_documentaries`
+  sequentially (1..N) via a new `_rerank()`. The dashboard additionally numbers
+  rank chips by display position, so the visible list is always a contiguous
+  #1..#N regardless of any state-hidden entries.
+- **Sonarr exact-ID hardening**: `staging.stage_series` now accepts a `tmdb_id`
+  and, when no `tvdb_id` is available, resolves it via Sonarr's Skyhook
+  (`/series/lookup?term=tmdb:{id}`) before falling back to a fuzzy name lookup —
+  keeping staging exact-ID end-to-end. The dashboard passes the enriched
+  `tmdb_id` through for series.
+
+### Added
+- **TMDB attribution footer**: a small, always-shown footer — "This product uses
+  the TMDB API but is not endorsed or certified by TMDB." with the TMDB logo
+  linking to themoviedb.org — satisfying TMDB's free-tier attribution terms.
+
+### Fixed
+- **Windows smoke-test crash**: `tests/smoke_test.py` fixture writes now pass
+  `encoding="utf-8"`, so the history-seeding test no longer crashes on Windows
+  (cp1252) when writing `✅`/`⬜` characters.
+
 ## [0.3.0] - 2026-07-13
 
 ### Added
@@ -125,7 +155,8 @@ dashboard, deployable as a single container on Docker Swarm.
   (`tests/smoke_test.py`), and CI workflows for GitHub and Gitea.
 - **Docs**: `README.md`, `DOCKER.md`, `GIT.md`.
 
-[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/jsaumer/jellyfin-recs/compare/v0.1.0...v0.1.1

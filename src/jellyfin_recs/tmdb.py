@@ -84,6 +84,7 @@ def enrich_all(recs):
     """Walk the full recommendations structure and enrich every rec.
     Movies + documentaries -> 'movie'; shows + cartoons -> 'tv'.
     (Cartoon FILMS will still resolve via the tv->movie fallback below.)
+    Ranked lists (top10_*, top3_documentaries) are enriched by their own keys.
     No-op if TMDB_API_KEY is unset."""
     if not config.TMDB_API_KEY:
         return recs
@@ -95,16 +96,15 @@ def enrich_all(recs):
             if kind == "tv" and "tmdb_id" not in rec:
                 enrich_rec(rec, "movie")
 
-    for section, kind in (("movies", "movie"), ("shows", "tv"),
-                          ("documentaries", "movie"), ("cartoons", "tv")):
+    for section, kind in (("movies", "movie"), ("shows", "tv")):
         block = recs.get(section)
         if isinstance(block, dict):          # genre-keyed
             for genre in block:
                 walk(block[genre], kind)
-        elif isinstance(block, list):        # flat list (docs, cartoons, top10)
+        elif isinstance(block, list):        # flat list
             walk(block, kind)
-    # top10 lists live under their own keys
+    # ranked lists live under their own keys
     for key, kind in (("top10_movies", "movie"), ("top10_shows", "tv"),
-                      ("top10_cartoons", "tv")):
+                      ("top10_cartoons", "tv"), ("top3_documentaries", "movie")):
         walk(recs.get(key), kind)
     return recs

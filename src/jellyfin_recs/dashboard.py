@@ -105,8 +105,10 @@ def api_stage():
                                          title=data["title"], year=data.get("year"))
             landed = config.RADARR_ROOT_FOLDER
         elif category in ("shows", "cartoons"):
-            # Prefer the enriched TVDB id (exact match) over fuzzy name lookup.
+            # Prefer the enriched TVDB id; fall back to TMDB id (resolved via
+            # Sonarr) then fuzzy name lookup — see staging.stage_series.
             result = staging.stage_series(tvdb_id=data.get("tvdb_id"),
+                                          tmdb_id=data.get("tmdb_id"),
                                           title=data["title"], year=data.get("year"),
                                           category=category)
             landed = result.get("rootFolderPath") or staging.resolve_sonarr_root(category)
