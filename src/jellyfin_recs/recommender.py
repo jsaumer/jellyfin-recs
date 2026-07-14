@@ -173,12 +173,12 @@ def _build_prompt(profile, history_dismissed=None, franchise_gaps=None):
     instruction = """
 Using the FULL library above, produce:
 
-1. TOP MOVIES, TOP TV SHOWS, and TOP CARTOONS — for EACH, a ranked list of 15
-   candidates (rank 1-15) of the best additions across all genres. These are the
+1. TOP MOVIES, TOP TV SHOWS, and TOP CARTOONS — for EACH, a ranked list of 20
+   candidates (rank 1-20) of the best additions across all genres. These are the
    primary output. Franchise gaps and franchise/series completions belong at the
    TOP of these lists; they are the highest-confidence picks. The extra
    candidates beyond 10 are backups: the app displays the top 10 that survive its
-   filters, so provide a full 15 with no filler at the bottom.
+   filters, so provide a full 20 with no filler at the bottom.
 2. TOP DOCUMENTARIES — a ranked list of 5 documentary candidates (rank 1-5)
    matching the documentary taste shown; the app displays the top 3 that survive.
 3. Genre deep-dives: for the TOP 6 movie genres and TOP 4 show genres only

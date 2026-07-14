@@ -43,11 +43,11 @@ CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 RECS_PER_GENRE = int(os.environ.get("RECS_PER_GENRE", "5"))
 # Cap the library summary size sent to the API (keeps token cost predictable).
 MAX_TITLES_IN_PROMPT = int(os.environ.get("MAX_TITLES_IN_PROMPT", "1500"))
-# Cap on the model's output. The over-provisioned response (15 candidates per
+# Cap on the model's output. The over-provisioned response (20 candidates per
 # top10_* list + 5 documentaries + capped genre sections) is longer than the
-# displayed set; too low a cap truncates the JSON and breaks parsing. 10000
-# gives the ~15+15+15+5 candidate lists comfortable headroom.
-MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "10000"))
+# displayed set; too low a cap truncates the JSON and breaks parsing. 12000
+# gives the ~20+20+20+5 candidate lists comfortable headroom.
+MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "12000"))
 
 # ============================ TMDB =========================================
 # Optional. Enriches each recommendation with poster, rating, IMDb/TMDB links,

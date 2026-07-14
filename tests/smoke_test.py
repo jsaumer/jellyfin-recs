@@ -276,6 +276,34 @@ def test_rating_rerank():
           [r["rank"] for r in recs["top10_movies"]] == [1, 2, 3, 4])
 
 
+def test_prompt_candidate_buffer():
+    print("prompt over-provision buffer")
+    from jellyfin_recs import recommender
+    library = {"movies": [{"Name": "Skyfall", "ProductionYear": 2012,
+                           "Genres": ["Action"], "UserData": {"Played": True}}]}
+    profile = recommender.build_profile(library)
+    prompt = recommender._build_prompt(profile, set(), [])
+    check("asks for 20 top candidates", "ranked list of 20" in prompt
+          and "rank 1-20" in prompt)
+    check("docs stay at 5", "5 documentary candidates" in prompt)
+    # Server still truncates to the display caps regardless of the buffer.
+    check("caps unchanged 10/3", recommender.DISPLAY_CAPS["top10_movies"] == 10
+          and recommender.DISPLAY_CAPS["top3_documentaries"] == 3)
+
+
+def test_ui_density():
+    print("condensed card UI")
+    from jellyfin_recs.dashboard_ui import PAGE
+    from jellyfin_recs import tmdb
+    check("dense auto-fill grid", "minmax(250px, 1fr)" in PAGE)
+    check("why clamped to 3 lines", "-webkit-line-clamp: 3" in PAGE)
+    check("why expand toggle", ".why.expanded" in PAGE
+          and 'classList.toggle("expanded")' in PAGE)
+    check("posters use w154", tmdb.POSTER_BASE.endswith("/w154"))
+    check("tmdb attribution footer kept",
+          "not endorsed or certified by TMDB" in PAGE)
+
+
 def test_json_repair():
     print("truncated JSON repair")
     from jellyfin_recs import recommender
@@ -310,6 +338,8 @@ def main():
     test_cross_section_dedupe()
     test_why_hygiene()
     test_rating_rerank()
+    test_prompt_candidate_buffer()
+    test_ui_density()
     test_dashboard_endpoints()
     print()
     if _failures:

@@ -27,37 +27,47 @@ PAGE = r"""<!DOCTYPE html>
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); color: #04203f; border-color: var(--accent); font-weight: 600; }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 22px; }
-  .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 16px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
   .tab { padding: 8px 16px; border-radius: 20px; background: var(--panel2);
     border: 1px solid var(--border); }
   .tab.active { background: var(--accent); color: #04203f; border-color: var(--accent); font-weight: 600; }
-  .genre { margin-bottom: 28px; }
-  .genre h3 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em;
+  .genre { margin-bottom: 18px; }
+  .genre h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
     color: var(--muted); border-bottom: 1px solid var(--border);
-    padding-bottom: 6px; margin-bottom: 12px; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+    padding-bottom: 5px; margin-bottom: 9px; }
+  /* Dense auto-fill grid: ~4-5 columns at desktop width, 1-2 on mobile. */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
   .card { background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px; display: flex; flex-direction: row; gap: 12px; }
+    border-radius: 8px; padding: 9px; display: flex; flex-direction: row; gap: 9px; }
   .card.approved { border-color: var(--green); }
   .card.dismissed { opacity: .45; }
   .card.staged { border-color: var(--purple); }
-  .poster { width: 68px; height: 102px; object-fit: cover; border-radius: 6px;
+  .poster { width: 50px; height: 75px; object-fit: cover; border-radius: 5px;
     flex-shrink: 0; background: var(--panel2); }
-  .cardBody { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; }
-  .title { font-weight: 600; }
-  .rank { display: inline-block; background: var(--accent); color: #04203f;
-    font-weight: 700; font-size: 12px; border-radius: 6px; padding: 1px 7px; margin-right: 4px; }
-  .rating { color: var(--amber); font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .year { color: var(--muted); font-weight: 400; font-size: 13px; }
-  .why { color: var(--muted); font-size: 13px; flex: 1; }
-  .links { display: flex; gap: 6px; }
-  .linkBtn { font-size: 12px; text-decoration: none; padding: 3px 9px; border-radius: 6px;
-    border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
-  .linkBtn:hover { border-color: var(--accent); color: var(--text); }
-  .actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
-  .actions button { padding: 5px 10px; font-size: 13px; }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; align-self: flex-start; }
+  .cardBody { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+  /* Row 1: rank + title + year + rating on a single ellipsized line. */
+  .head { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+  .head .title { font-weight: 600; font-size: 13px; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rank { background: var(--accent); color: #04203f; font-weight: 700;
+    font-size: 11px; border-radius: 5px; padding: 1px 5px; flex-shrink: 0; }
+  .rating { color: var(--amber); font-size: 11px; font-weight: 600; flex-shrink: 0; }
+  .year { color: var(--muted); font-weight: 400; font-size: 11px; flex-shrink: 0; }
+  /* Row 2: why, clamped to 3 lines; click toggles .expanded to show it all. */
+  .why { color: var(--muted); font-size: 12px; line-height: 1.45; cursor: pointer;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden; }
+  .why.expanded { -webkit-line-clamp: unset; overflow: visible; }
+  /* Bare text links keep row 3 on a single line inside a ~250px card. */
+  .linkBtn { font-size: 11px; text-decoration: none; color: var(--muted);
+    padding: 0; border: 0; background: none; flex-shrink: 0; }
+  .linkBtn:hover { color: var(--accent); text-decoration: underline; }
+  /* Row 3: links + compact actions, all inline (wraps only if very narrow). */
+  .actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 1px; }
+  .actions button { padding: 2px 5px; font-size: 10px; border-radius: 5px; flex-shrink: 0;
+    white-space: nowrap; }
+  .badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; }
   .badge.approved { background: rgba(63,185,80,.15); color: var(--green); }
   .badge.dismissed { background: rgba(248,81,73,.15); color: var(--red); }
   .badge.staged { background: rgba(188,140,255,.15); color: var(--purple); }
@@ -185,32 +195,43 @@ function card(rec, displayRank) {
 
   const body = document.createElement("div");
   body.className = "cardBody";
-  const badge = st ? `<span class="badge ${st}">${st}</span>` : "";
+
+  // Row 1 — rank + title + (year) + ★rating on one ellipsized line.
   // Rank chip is the display position (1..N), so the visible list is always
   // contiguous even if server-side filtering left holes in rec.rank.
+  const head = document.createElement("div");
+  head.className = "head";
   const rankHtml = displayRank ? `<span class="rank">#${displayRank}</span>` : "";
-  const ratingHtml = rec.rating ? `<span class="rating">★ ${rec.rating}</span>` : "";
-  body.innerHTML = `${badge}
-    <div class="title">${rankHtml}${rec.title}
-      <span class="year">(${rec.year||"—"})</span> ${ratingHtml}</div>
-    <div class="why">${rec.why||""}</div>`;
+  const ratingHtml = rec.rating ? `<span class="rating">★${rec.rating}</span>` : "";
+  head.innerHTML = `${rankHtml}<span class="title">${rec.title}</span>` +
+    `<span class="year">(${rec.year||"—"})</span>${ratingHtml}`;
+  const t = head.querySelector(".title");
+  if (t) t.title = rec.title;          // full title on hover when ellipsized
+  body.appendChild(head);
 
-  // External link buttons (only when enrichment supplied them).
-  if (rec.imdb_url || rec.tmdb_url) {
-    const links = document.createElement("div");
-    links.className = "links";
-    if (rec.imdb_url) links.appendChild(mkLink("IMDb", rec.imdb_url));
-    if (rec.tmdb_url) links.appendChild(mkLink("TMDB", rec.tmdb_url));
-    body.appendChild(links);
-  }
+  // Row 2 — why, clamped to 3 lines; click toggles full text.
+  const why = document.createElement("div");
+  why.className = "why";
+  why.textContent = rec.why || "";
+  why.title = "Click to expand / collapse";
+  why.onclick = () => why.classList.toggle("expanded");
+  body.appendChild(why);
 
+  // Row 3 — status badge, IMDb/TMDB links, and compact actions, all inline.
   const actions = document.createElement("div");
   actions.className = "actions";
+  if (st) {
+    const b = document.createElement("span");
+    b.className = "badge " + st; b.textContent = st;
+    actions.appendChild(b);
+  }
+  if (rec.imdb_url) actions.appendChild(mkLink("IMDb", rec.imdb_url));
+  if (rec.tmdb_url) actions.appendChild(mkLink("TMDB", rec.tmdb_url));
   if (st !== "approved" && st !== "staged")
     actions.appendChild(mkBtn("✓ Approve", () => setStatus(rec, "approved")));
   if (st !== "dismissed")
     actions.appendChild(mkBtn("✕ Dismiss", () => setStatus(rec, "dismissed")));
-  if (st) actions.appendChild(mkBtn("↺ Reset", () => setStatus(rec, "reset")));
+  if (st) actions.appendChild(mkBtn("↺", () => setStatus(rec, "reset"), "Reset"));
   if (st === "approved" && DATA.staging && DATA.staging.enabled &&
       (ACTIVE === "movies" || ACTIVE === "shows" || ACTIVE === "cartoons")) {
     actions.appendChild(mkBtn("→ Grab", () => stage(rec)));
@@ -221,9 +242,11 @@ function card(rec, displayRank) {
   return div;
 }
 
-function mkBtn(label, fn) {
+function mkBtn(label, fn, tip) {
   const b = document.createElement("button");
-  b.textContent = label; b.onclick = fn; return b;
+  b.textContent = label; b.onclick = fn;
+  if (tip) b.title = tip;
+  return b;
 }
 
 function mkLink(label, url) {

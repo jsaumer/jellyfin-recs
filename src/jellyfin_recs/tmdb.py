@@ -22,7 +22,9 @@ from urllib.error import HTTPError, URLError
 from . import config
 
 TMDB_BASE = "https://api.themoviedb.org/3"
-POSTER_BASE = "https://image.tmdb.org/t/p/w342"
+# w154 is sharp at the dashboard's condensed thumbnail size and roughly halves
+# image weight versus w342.
+POSTER_BASE = "https://image.tmdb.org/t/p/w154"
 
 
 def _get(path, params=None):

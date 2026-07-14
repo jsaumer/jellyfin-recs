@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-14
+
+### Changed
+- **Condensed, poster-forward cards**: the recommendation card was rebuilt for
+  density while keeping the poster prominent. The grid is now an auto-fill
+  `minmax(250px, 1fr)` — **5 columns at 1440px** (1 on mobile, no horizontal
+  overflow) instead of 3. Each card is a single compact unit: poster at left,
+  then one ellipsized header line (rank + title + year + ★rating), the `why`
+  clamped to 3 lines with click-to-expand, and a **single inline row** carrying
+  the IMDb/TMDB links plus compact Approve/Dismiss buttons. Padding dropped from
+  14px to 9px (~36% less) and measured card height fell from ~200px to ~125px.
+  Genre-section cards use the same compact card; section headers and the TMDB
+  attribution footer are unchanged.
+- **Lighter posters**: `tmdb.POSTER_BASE` now requests TMDB's **w154** size
+  instead of w342 — sharp at the new 50×75 thumbnail size and roughly half the
+  image weight.
+- **Fuller lists under mid-session attrition**: the prompt now asks for **20**
+  ranked candidates per `top10_*` list (up from 15; documentaries stay at 5).
+  Truncation to 10/3 in `generate()` is unchanged — the larger buffer just means
+  more survivors after filtering. `MAX_OUTPUT_TOKENS` default raised
+  10000 → 12000 to cover the bigger candidate set.
+
 ## [0.4.1] - 2026-07-14
 
 ### Fixed
@@ -188,7 +210,8 @@ dashboard, deployable as a single container on Docker Swarm.
   (`tests/smoke_test.py`), and CI workflows for GitHub and Gitea.
 - **Docs**: `README.md`, `DOCKER.md`, `GIT.md`.
 
-[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jsaumer/jellyfin-recs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jsaumer/jellyfin-recs/compare/v0.2.0...v0.3.0
