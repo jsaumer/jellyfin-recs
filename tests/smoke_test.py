@@ -46,6 +46,12 @@ def test_profiling_and_ownership():
     profile = recommender.build_profile(library)
     check("library counted", profile["categories"]["movies"]["count"] == 2)
     check("owned set built", "nobody" in profile["owned_titles"])
+    # New full-library fields (replaced the old watched_sample).
+    mv = profile["categories"]["movies"]
+    check("owned_entries present", len(mv["owned_entries"]) == 2)
+    check("watched marker applied",
+          any(e.startswith("✓Nobody") for e in mv["owned_entries"]))
+    check("watched_count correct", mv["watched_count"] == 1)
     # "Heat" is NOT in the library, so it must survive the ownership filter.
     fake = {"movies": {"Action": [
         {"title": "Nobody", "year": 2021, "why": "x"},
@@ -55,6 +61,20 @@ def test_profiling_and_ownership():
     check("owned title dropped", "Nobody" in removed)
     check("unowned kept", any(r["title"] == "Heat"
                               for r in filtered["movies"]["Action"]))
+
+
+def test_franchise_gaps():
+    print("franchise gap detection")
+    from jellyfin_recs import recommender
+    # Owns 2 of 5 Craig Bond films.
+    owned = {"casino royale", "spectre", "heat"}
+    gaps = dict(recommender.detect_franchise_gaps(owned))
+    bond = gaps.get("James Bond (Craig)")
+    check("partial franchise detected", bond is not None)
+    check("missing entries listed",
+          bond is not None and "Skyfall" in bond and "No Time to Die" in bond)
+    # A fully-owned or fully-unowned franchise should NOT appear.
+    check("complete franchise not flagged", "Blade Runner" not in gaps)
 
 
 def test_history_parsing():
@@ -129,6 +149,7 @@ def test_json_repair():
 def main():
     print("Running smoke tests...\n")
     test_profiling_and_ownership()
+    test_franchise_gaps()
     test_history_parsing()
     test_storage_roundtrip()
     test_json_repair()

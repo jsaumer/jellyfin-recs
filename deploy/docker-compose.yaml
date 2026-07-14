@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   jellyfin-recs:
-    image: ${IMAGE:-ghcr.io/jsaumer/jellyfin-recs:0.1.1}
+    image: ${IMAGE:-ghcr.io/jsaumer/jellyfin-recs:0.2.0}
     # Pinned to a specific version. Bump this tag (or override the IMAGE env var
     # in Komodo) to deploy a new release. Published to GHCR by the GitHub Actions
     # release workflow on every `git push` of a `v*.*.*` tag.
